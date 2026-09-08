@@ -10,33 +10,102 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AiAssistantRouteImport } from './routes/ai-assistant'
+import { Route as CustomersRouteImport } from './routes/customers'
+import { Route as InventoryRouteImport } from './routes/inventory'
+import { Route as OrdersRouteImport } from './routes/orders'
+import { Route as ReceivablesRouteImport } from './routes/receivables'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AiAssistantRoute = AiAssistantRouteImport.update({
+  id: '/ai-assistant',
+  path: '/ai-assistant',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CustomersRoute = CustomersRouteImport.update({
+  id: '/customers',
+  path: '/customers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InventoryRoute = InventoryRouteImport.update({
+  id: '/inventory',
+  path: '/inventory',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrdersRoute = OrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReceivablesRoute = ReceivablesRouteImport.update({
+  id: '/receivables',
+  path: '/receivables',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/ai-assistant': typeof AiAssistantRoute
+  '/customers': typeof CustomersRoute
+  '/inventory': typeof InventoryRoute
+  '/orders': typeof OrdersRoute
+  '/receivables': typeof ReceivablesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/ai-assistant': typeof AiAssistantRoute
+  '/customers': typeof CustomersRoute
+  '/inventory': typeof InventoryRoute
+  '/orders': typeof OrdersRoute
+  '/receivables': typeof ReceivablesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/ai-assistant': typeof AiAssistantRoute
+  '/customers': typeof CustomersRoute
+  '/inventory': typeof InventoryRoute
+  '/orders': typeof OrdersRoute
+  '/receivables': typeof ReceivablesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/ai-assistant'
+    | '/customers'
+    | '/inventory'
+    | '/orders'
+    | '/receivables'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/ai-assistant'
+    | '/customers'
+    | '/inventory'
+    | '/orders'
+    | '/receivables'
+  id:
+    | '__root__'
+    | '/'
+    | '/ai-assistant'
+    | '/customers'
+    | '/inventory'
+    | '/orders'
+    | '/receivables'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AiAssistantRoute: typeof AiAssistantRoute
+  CustomersRoute: typeof CustomersRoute
+  InventoryRoute: typeof InventoryRoute
+  OrdersRoute: typeof OrdersRoute
+  ReceivablesRoute: typeof ReceivablesRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +117,51 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ai-assistant': {
+      id: '/ai-assistant'
+      path: '/ai-assistant'
+      fullPath: '/ai-assistant'
+      preLoaderRoute: typeof AiAssistantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/customers': {
+      id: '/customers'
+      path: '/customers'
+      fullPath: '/customers'
+      preLoaderRoute: typeof CustomersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inventory': {
+      id: '/inventory'
+      path: '/inventory'
+      fullPath: '/inventory'
+      preLoaderRoute: typeof InventoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/orders': {
+      id: '/orders'
+      path: '/orders'
+      fullPath: '/orders'
+      preLoaderRoute: typeof OrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/receivables': {
+      id: '/receivables'
+      path: '/receivables'
+      fullPath: '/receivables'
+      preLoaderRoute: typeof ReceivablesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AiAssistantRoute: AiAssistantRoute,
+  CustomersRoute: CustomersRoute,
+  InventoryRoute: InventoryRoute,
+  OrdersRoute: OrdersRoute,
+  ReceivablesRoute: ReceivablesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

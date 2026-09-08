@@ -502,3 +502,129 @@ export function trend(current: number, previous: number): { pct: number; directi
   const pct = ((current - previous) / Math.abs(previous)) * 100;
   return { pct, direction: pct > 0.05 ? "up" : pct < -0.05 ? "down" : "flat" };
 }
+
+export interface MetricDefinition {
+  title: string;
+  definition: string;
+  formula: string;
+  rules: string[];
+  sources: string[];
+  sample?: string;
+}
+
+export const METRIC_INFO: Record<string, MetricDefinition> = {
+  netSales: {
+    title: "Net Sales",
+    definition: "Total revenue generated from qualifying customer orders minus customer refunds and returns.",
+    formula: "Net Sales = Gross Sales - Refunds",
+    rules: [
+      "Qualifying order statuses: Shipped, Delivered, Returned, Partially Returned.",
+      "Cancelled, Pending, and Confirmed orders are excluded from sales totals.",
+      "Returns reduce Net Sales in the period the refund is recorded.",
+    ],
+    sources: ["orders.csv", "returns.csv"],
+    sample: "Gross Sales PKR 4.38B - Returns PKR 101.4M = Net Sales PKR 4.28B",
+  },
+  grossProfit: {
+    title: "Gross Profit & Margin",
+    definition: "The profit financial margin earned after subtracting product unit manufacturing/purchase costs from gross sales.",
+    formula: "Gross Profit = Sum(Line Total - Line Cost); Margin % = (Gross Profit / Gross Sales) * 100",
+    rules: [
+      "Calculated at item level: (unit_price - unit_cost) * quantity.",
+      "Only qualifying order items are included.",
+      "Refunds/returns do not alter standard COGS cost baselines unless restocked.",
+    ],
+    sources: ["orders.csv", "order_items.csv", "products.csv"],
+    sample: "Gross Sales PKR 4.38B - Cost of Goods PKR 3.50B = Profit PKR 877.7M (20.0%)",
+  },
+  totalOrders: {
+    title: "Total Qualifying Orders",
+    definition: "Count of customer orders that reached a fulfilled or shipped status.",
+    formula: "Total Orders = Count(orders where order_status in QUALIFYING_STATUSES)",
+    rules: [
+      "Qualifying statuses: Shipped, Delivered, Returned, Partially Returned.",
+      "Cancelled, Pending, and Confirmed orders are tracked separately in Order Operations.",
+    ],
+    sources: ["orders.csv"],
+  },
+  receivables: {
+    title: "Outstanding Receivables & Overdue",
+    definition: "Uncollected payment balances on issued customer invoices.",
+    formula: "Outstanding Amount = Invoice Amount - Amount Paid",
+    rules: [
+      "Paid: Outstanding Amount = 0.",
+      "Current: Outstanding balance exists and due date is > 14 days in the future.",
+      "Due Soon: Outstanding balance exists and due date is within 14 days.",
+      "Overdue: due_date < reference_date (2026-09-01) AND outstanding_amount > 0.",
+    ],
+    sources: ["receivables.csv", "payments.csv", "customers.csv"],
+    sample: "Total Outstanding PKR 264.0M | Overdue PKR 91.3M (34.58%)",
+  },
+  inventoryValue: {
+    title: "Inventory Value & Health",
+    definition: "Total monetary valuation of physical stock held in warehouses and classification by availability.",
+    formula: "Quantity Available = Quantity On Hand - Quantity Reserved; Value = On Hand * Unit Cost",
+    rules: [
+      "In Stock: available > reorder_level",
+      "Low Stock: 0 < available <= reorder_level",
+      "Out of Stock: available = 0",
+      "Inventory Discrepancy: available < 0 (Reserved units exceed units on hand)",
+    ],
+    sources: ["inventory.csv", "products.csv"],
+    sample: "52 In Stock, 11 Low Stock, 7 Out of Stock, 2 Discrepancy",
+  },
+  onTimeDelivery: {
+    title: "On-Time Delivery Rate",
+    definition: "Percentage of delivered shipments that reached the customer on or before the promised required date.",
+    formula: "On-Time Rate = (On-Time Deliveries / Total Completed Deliveries) * 100",
+    rules: [
+      "On-Time: delivered_date <= required_date.",
+      "Delayed: delivered_date > required_date.",
+      "Lead Time: delivered_date - order_date.",
+      "Overdue Open Order: Order not delivered and required_date < 2026-09-01.",
+    ],
+    sources: ["orders.csv"],
+    sample: "1,775 On-Time / 2,369 Completed = 74.93% On-Time Rate",
+  },
+  topProducts: {
+    title: "Top Products Ranking",
+    definition: "Products ranked by total realized gross revenue from qualifying sales orders.",
+    formula: "Product Revenue = Sum(line_total) for qualifying order items",
+    rules: [
+      "Excludes line items from cancelled or pending orders.",
+      "Margin % = (Gross Profit / Line Total) * 100",
+    ],
+    sources: ["order_items.csv", "orders.csv", "products.csv"],
+  },
+  topCustomers: {
+    title: "Top Customers Ranking",
+    definition: "Key accounts ranked by total purchase volume across qualifying sales orders.",
+    formula: "Customer Sales = Sum(total_amount) for qualifying orders",
+    rules: [
+      "Outstanding balances are matched directly from customer invoice records.",
+    ],
+    sources: ["orders.csv", "customers.csv", "receivables.csv"],
+  },
+  orderStatus: {
+    title: "Order Status Operations",
+    definition: "Comprehensive breakdown of all orders across their lifecycle stages.",
+    formula: "Group orders by order_status and sum total_amount",
+    rules: [
+      "Includes all 3,200 orders in the dataset regardless of status.",
+      "Only qualifying statuses contribute to Net Sales metrics.",
+    ],
+    sources: ["orders.csv"],
+  },
+  actionCenter: {
+    title: "Management Action Center",
+    definition: "Automated business alerts highlighting operational bottlenecks and financial risks.",
+    formula: "Real-time rule evaluation over inventory, receivables, and order delivery tables",
+    rules: [
+      "Critical severity: Out-of-stock items, Overdue invoices.",
+      "Warning severity: Low-stock items, Delayed deliveries, Overdue open orders.",
+      "Info severity: Inventory discrepancies.",
+    ],
+    sources: ["inventory.csv", "receivables.csv", "orders.csv"],
+  },
+};
+
