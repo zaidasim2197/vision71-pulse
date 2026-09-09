@@ -5,6 +5,7 @@ export type PresetKey =
   | "yesterday"
   | "last7"
   | "last30"
+  | "thisWeek"
   | "thisMonth"
   | "lastMonth"
   | "thisQuarter"
@@ -23,6 +24,7 @@ export const PRESET_LABELS: Record<PresetKey, string> = {
   yesterday: "Yesterday",
   last7: "Last 7 Days",
   last30: "Last 30 Days",
+  thisWeek: "This Week",
   thisMonth: "This Month",
   lastMonth: "Last Month",
   thisQuarter: "This Quarter",
@@ -34,6 +36,7 @@ export const PRESET_LABELS: Record<PresetKey, string> = {
 export const PRESET_ORDER: PresetKey[] = [
   "today",
   "yesterday",
+  "thisWeek",
   "last7",
   "last30",
   "thisMonth",
@@ -64,6 +67,11 @@ export function resolvePreset(preset: PresetKey, today = REFERENCE_DATE): DateRa
     case "yesterday": {
       const yd = addDays(today, -1);
       return { preset, from: yd, to: yd };
+    }
+    case "thisWeek": {
+      const dow = d.getUTCDay(); // 0=Sun
+      const startOfWeek = addDays(today, -((dow + 6) % 7)); // Monday
+      return { preset, from: startOfWeek, to: today };
     }
     case "last7":
       return { preset, from: addDays(today, -6), to: today };

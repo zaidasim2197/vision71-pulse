@@ -32,7 +32,7 @@ export function DatasetProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const [dateRange, setDateRange] = useState<DateRange>(() => resolvePreset("allTime"));
+  const [dateRange, setDateRange] = useState<DateRange>(() => resolvePreset("lastMonth"));
   const prevDateRange = useMemo(() => previousRange(dateRange), [dateRange]);
 
   const [searchOpen, setSearchOpen] = useState(false);

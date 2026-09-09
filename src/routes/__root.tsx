@@ -169,32 +169,20 @@ function RootComponent() {
             {/* Main Page Body */}
             <main
               ref={mainRef}
-              className={`flex-1 min-h-0 ${isAi ? "overflow-hidden flex flex-col" : "overflow-y-auto pb-12"}`}
+              className={`flex-1 min-h-0 ${isAi ? "overflow-hidden flex flex-col" : "overflow-y-auto md:overflow-hidden pb-2 md:pb-0"}`}
             >
               <Outlet />
             </main>
 
-            {/* Floating Scroll To Top Button */}
+            {/* Floating Scroll To Top Button (Mobile only) */}
             {!isAi && showScrollTop && (
               <button
                 onClick={scrollToTop}
                 aria-label="Scroll to top"
-                className="fixed bottom-6 right-6 z-50 flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 hover:scale-105 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="fixed bottom-6 right-6 z-50 md:hidden flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 hover:scale-105 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50"
               >
                 <ArrowUp className="h-5 w-5" />
               </button>
-            )}
-
-            {/* Footer (Hidden on fixed AI Assistant page to prevent scroll jumping) */}
-            {!isAi && (
-              <footer className="border-t border-border/40 py-4 text-center text-xs text-muted-foreground bg-card/40 shrink-0">
-                <div className="mx-auto max-w-7xl px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-                  <p>&copy; {new Date().getFullYear()} PulseOps Technologies. All rights reserved.</p>
-                  <p className="font-mono text-[11px]">
-                    Data through Aug 31, 2026 | Reference date: Sep 1, 2026
-                  </p>
-                </div>
-              </footer>
             )}
 
             {/* Global Modals */}

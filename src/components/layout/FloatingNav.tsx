@@ -17,6 +17,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Activity,
+  Trophy,
 } from "lucide-react";
 import { useDataset } from "../providers/DatasetProvider";
 import { useTheme } from "../providers/ThemeProvider";
@@ -47,11 +48,12 @@ export function FloatingNav() {
     : [];
 
   const navItems = [
-    { label: "Overview", to: "/", icon: LayoutDashboard },
+    { label: "Sales", to: "/", icon: LayoutDashboard },
     { label: "Orders", to: "/orders", icon: ShoppingBag },
     { label: "Inventory", to: "/inventory", icon: Package },
-    { label: "Customers", to: "/customers", icon: Users },
     { label: "Receivables", to: "/receivables", icon: Receipt },
+    { label: "Top Performers", to: "/top-performers", icon: Trophy },
+    { label: "Operations", to: "/operations", icon: Activity },
     { label: "AI Assistant", to: "/ai-assistant", icon: Sparkles, badge: "AI" },
   ];
 
@@ -77,28 +79,31 @@ export function FloatingNav() {
           </Link>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1 bg-muted/40 p-1 rounded-xl border border-border/40">
-            {navItems.map((item) => {
+          <nav className="hidden lg:flex items-center bg-muted/40 p-1 rounded-xl border border-border/40">
+            {navItems.map((item, idx) => {
               const Icon = item.icon;
               const isActive = pathname === item.to || (item.to !== "/" && pathname.startsWith(item.to));
+              const isLast = idx === navItems.length - 1;
               return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    isActive
-                      ? "bg-card text-foreground shadow-xs"
-                      : "text-muted-foreground hover:text-foreground hover:bg-card/50"
-                  }`}
-                >
-                  <Icon className={`h-3.5 w-3.5 ${isActive ? "text-primary" : ""}`} />
-                  <span>{item.label}</span>
-                  {item.badge && (
-                    <Badge variant="secondary" className="px-1 py-0 text-[9px] font-mono bg-primary/10 text-primary border-0">
-                      {item.badge}
-                    </Badge>
-                  )}
-                </Link>
+                <div key={item.to} className="flex items-center">
+                  <Link
+                    to={item.to}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
+                      isActive
+                        ? "bg-card text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground hover:bg-card/50"
+                    }`}
+                  >
+                    <Icon className={`h-3.5 w-3.5 ${isActive ? "text-primary" : ""}`} />
+                    <span className="whitespace-nowrap">{item.label}</span>
+                    {item.badge && (
+                      <Badge variant="secondary" className="px-1 py-0 text-[9px] font-mono bg-primary/10 text-primary border-0">
+                        {item.badge}
+                      </Badge>
+                    )}
+                  </Link>
+                  {!isLast && <div className="h-3.5 w-[1px] bg-border/50 mx-1 shrink-0" />}
+                </div>
               );
             })}
           </nav>

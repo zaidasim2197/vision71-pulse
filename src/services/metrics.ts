@@ -1,5 +1,8 @@
 // Business logic layer. Every dashboard number is derived here from the
 // source records — no component computes business values on its own.
+//
+// Haroon's Architecture Document is the single source of truth for all KPI
+// definitions and formulas. See METRIC_INFO at the bottom for exact wording.
 
 import {
   QUALIFYING_STATUSES,
@@ -11,11 +14,15 @@ import {
   type Product,
   type Receivable,
 } from "@/lib/dataset";
-import { inRange, type DateRange } from "./dateRange";
+import { inRange, previousRange, type DateRange } from "./dateRange";
 
 const QUALIFYING = new Set<string>(QUALIFYING_STATUSES);
 
+/** Legacy filter — used by AI engine. Keeps Shipped/Delivered/Returned/Partially Returned. */
 export const isQualifyingOrder = (o: Order) => QUALIFYING.has(o.order_status);
+
+/** Haroon filter — "orders that are not cancelled". Includes Pending, Processing, etc. */
+export const isNotCancelled = (o: Order) => o.order_status !== "Cancelled";
 
 export interface SalesMetrics {
   grossSales: number;
@@ -27,6 +34,7 @@ export interface SalesMetrics {
   averageOrderValue: number;
 }
 
+/** Legacy sales calc using QUALIFYING_STATUSES — kept for AI engine. */
 export function calculateSales(data: Dataset, range: DateRange): SalesMetrics {
   let grossSales = 0;
   let grossProfit = 0;
@@ -49,6 +57,396 @@ export function calculateSales(data: Dataset, range: DateRange): SalesMetrics {
     totalOrders,
     averageOrderValue: totalOrders > 0 ? grossSales / totalOrders : 0,
   };
+}
+
+// ======================== HAROON-COMPLIANT KPIs ========================
+
+/** Page 1 — Sales Performance (Haroon §3.1) */
+export interface HaroonSalesKPIs {
+  totalSales: number;
+  totalOrders: number;
+  averageOrderValue: number;
+  salesGrowthPct: number | null;
+}
+
+/**
+ * Haroon Total Sales: Sum(quantity × unit_price) across order lines for
+ * not-cancelled orders where order_date is in selected range.
+ * Uses line_total from OrderItem which IS quantity × unit_price.
+ */
+export function calculateHaroonSales(data: Dataset, range: DateRange): HaroonSalesKPIs {
+  const orderIdsInRange = new Set<string>();
+  for (const o of data.orders) {
+    if (isNotCancelled(o) && inRange(o.order_date, range)) {
+      orderIdsInRange.add(o.order_id);
+    }
+  }
+  let totalSales = 0;
+  for (const item of data.orderItems) {
+    if (orderIdsInRange.has(item.order_id)) {
+      totalSales += item.line_total; // line_total = quantity × unit_price
+    }
+  }
+  const totalOrders = orderIdsInRange.size;
+  const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
+
+  // Sales Growth: compare to previous period of equal length
+  const prev = previousRange(range);
+  const prevOrderIds = new Set<string>();
+  for (const o of data.orders) {
+    if (isNotCancelled(o) && inRange(o.order_date, prev)) {
+      prevOrderIds.add(o.order_id);
+    }
+  }
+  let prevSales = 0;
+  for (const item of data.orderItems) {
+    if (prevOrderIds.has(item.order_id)) {
+      prevSales += item.line_total;
+    }
+  }
+  const salesGrowthPct = prevSales > 0
+    ? ((totalSales - prevSales) / prevSales) * 100
+    : null;
+
+  return { totalSales, totalOrders, averageOrderValue, salesGrowthPct };
+}
+
+/** Monthly sales series using Haroon's not-cancelled filter. */
+export function calculateHaroonMonthlySales(data: Dataset, range: DateRange): { month: string; label: string; sales: number; orders: number }[] {
+  const orderIdsInRange = new Set<string>();
+  const orderMonths = new Map<string, string>(); // order_id → month
+  for (const o of data.orders) {
+    if (isNotCancelled(o) && inRange(o.order_date, range)) {
+      orderIdsInRange.add(o.order_id);
+      orderMonths.set(o.order_id, o.order_date.slice(0, 7));
+    }
+  }
+  const map = new Map<string, { month: string; sales: number; orders: Set<string> }>();
+  for (const item of data.orderItems) {
+    const month = orderMonths.get(item.order_id);
+    if (!month) continue;
+    let row = map.get(month);
+    if (!row) {
+      row = { month, sales: 0, orders: new Set() };
+      map.set(month, row);
+    }
+    row.sales += item.line_total;
+    row.orders.add(item.order_id);
+  }
+  return [...map.values()]
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map((r) => ({ month: r.month, label: r.month, sales: r.sales, orders: r.orders.size }));
+}
+
+/** Sales by category using Haroon's not-cancelled filter. */
+export function calculateSalesByCategory(data: Dataset, range: DateRange): { category: string; sales: number }[] {
+  const orderIdsInRange = new Set<string>();
+  for (const o of data.orders) {
+    if (isNotCancelled(o) && inRange(o.order_date, range)) {
+      orderIdsInRange.add(o.order_id);
+    }
+  }
+  const map = new Map<string, number>();
+  for (const item of data.orderItems) {
+    if (!orderIdsInRange.has(item.order_id)) continue;
+    const product = data.productById.get(item.product_id);
+    const cat = product?.category ?? "Other";
+    map.set(cat, (map.get(cat) ?? 0) + item.line_total);
+  }
+  return [...map.entries()]
+    .map(([category, sales]) => ({ category, sales }))
+    .sort((a, b) => b.sales - a.sales);
+}
+
+/** Page 2 — Orders & Fulfillment (Haroon §3.2) */
+export interface OrdersFulfillmentKPIs {
+  ordersPending: number;
+  ordersDelivered: number;
+  ordersCancelled: number;
+  fulfillmentRate: number;
+  totalOrdersInRange: number;
+}
+
+export function calculateOrdersFulfillment(data: Dataset, range: DateRange): OrdersFulfillmentKPIs {
+  let ordersPending = 0;
+  let ordersDelivered = 0;
+  let ordersCancelled = 0;
+  let totalNotCancelled = 0;
+  for (const o of data.orders) {
+    if (!inRange(o.order_date, range)) continue;
+    if (o.order_status === "Cancelled") { ordersCancelled++; continue; }
+    totalNotCancelled++;
+    if (o.order_status === "Pending" || o.order_status === "Processing") ordersPending++;
+    if (o.order_status === "Delivered") ordersDelivered++;
+  }
+  const fulfillmentRate = totalNotCancelled > 0 ? (ordersDelivered / totalNotCancelled) * 100 : 0;
+  return { ordersPending, ordersDelivered, ordersCancelled, fulfillmentRate, totalOrdersInRange: totalNotCancelled + ordersCancelled };
+}
+
+/** Monthly order counts for Orders Over Time chart. */
+export function calculateMonthlyOrders(data: Dataset, range: DateRange): { month: string; total: number; delivered: number; cancelled: number }[] {
+  const map = new Map<string, { month: string; total: number; delivered: number; cancelled: number }>();
+  for (const o of data.orders) {
+    if (!inRange(o.order_date, range)) continue;
+    const m = o.order_date.slice(0, 7);
+    let row = map.get(m);
+    if (!row) { row = { month: m, total: 0, delivered: 0, cancelled: 0 }; map.set(m, row); }
+    row.total++;
+    if (o.order_status === "Delivered") row.delivered++;
+    if (o.order_status === "Cancelled") row.cancelled++;
+  }
+  return [...map.values()].sort((a, b) => a.month.localeCompare(b.month));
+}
+
+/** Page 3 — Inventory (Haroon §3.3) — Live snapshot, ignores date filter */
+export interface HaroonInventoryKPIs {
+  totalStockValue: number;
+  itemsLowOnStock: number;
+  itemsOutOfStock: number;
+  totalActiveProducts: number;
+}
+
+export function calculateHaroonInventory(data: Dataset): HaroonInventoryKPIs {
+  let totalStockValue = 0;
+  let itemsLowOnStock = 0;
+  let itemsOutOfStock = 0;
+  const activeProducts = data.products.filter(p => p.product_status === "Active");
+
+  // Aggregate quantity_on_hand per product across all warehouses
+  const qtyByProduct = new Map<string, number>();
+  for (const row of data.inventory) {
+    qtyByProduct.set(row.product_id, (qtyByProduct.get(row.product_id) ?? 0) + row.quantity_on_hand);
+  }
+
+  for (const p of activeProducts) {
+    const qoh = qtyByProduct.get(p.product_id) ?? 0;
+    totalStockValue += qoh * p.unit_cost;
+    if (qoh === 0) itemsOutOfStock++;
+    else if (qoh <= p.reorder_level) itemsLowOnStock++;
+  }
+
+  return { totalStockValue, itemsLowOnStock, itemsOutOfStock, totalActiveProducts: activeProducts.length };
+}
+
+/** Low stock items list for the Inventory page ranking visualization. */
+export function getLowStockItems(data: Dataset, limit = 10): { product: Product; quantityOnHand: number; reorderLevel: number; pctOfReorder: number }[] {
+  const qtyByProduct = new Map<string, number>();
+  for (const row of data.inventory) {
+    qtyByProduct.set(row.product_id, (qtyByProduct.get(row.product_id) ?? 0) + row.quantity_on_hand);
+  }
+  const items: { product: Product; quantityOnHand: number; reorderLevel: number; pctOfReorder: number }[] = [];
+  for (const p of data.products) {
+    if (p.product_status !== "Active") continue;
+    const qoh = qtyByProduct.get(p.product_id) ?? 0;
+    if (qoh > 0 && qoh <= p.reorder_level) {
+      items.push({ product: p, quantityOnHand: qoh, reorderLevel: p.reorder_level, pctOfReorder: p.reorder_level > 0 ? (qoh / p.reorder_level) * 100 : 0 });
+    }
+  }
+  return items.sort((a, b) => a.pctOfReorder - b.pctOfReorder).slice(0, limit);
+}
+
+/** Page 4 — Receivables (Haroon §3.4) */
+export interface HaroonReceivablesKPIs {
+  totalOutstanding: number;
+  overdueAmount: number;
+  overdueInvoicesCount: number;
+  avgDaysToPay: number | null;
+}
+
+export function calculateHaroonReceivables(data: Dataset, range: DateRange): HaroonReceivablesKPIs {
+  const today = REFERENCE_DATE;
+  let totalOutstanding = 0;
+  let overdueAmount = 0;
+  let overdueInvoicesCount = 0;
+
+  // Total Outstanding & Overdue are LIVE SNAPSHOTS (ignore date filter)
+  for (const r of data.receivables) {
+    const outstanding = r.invoice_amount - r.amount_paid;
+    if (outstanding <= 0) continue; // Paid
+    totalOutstanding += outstanding;
+    if (r.due_date < today) {
+      overdueAmount += outstanding;
+      overdueInvoicesCount++;
+    }
+  }
+
+  // Avg Days to Pay: date-filtered — invoices marked Paid within selected range
+  let payDaysSum = 0;
+  let payDaysCount = 0;
+  for (const r of data.receivables) {
+    const outstanding = r.invoice_amount - r.amount_paid;
+    if (outstanding > 0.01) continue; // Not fully paid
+    // Find payment date from payments table
+    const payments = data.payments.filter(p => p.invoice_id === r.invoice_id);
+    if (payments.length === 0) continue;
+    const lastPayment = payments.sort((a, b) => b.payment_date.localeCompare(a.payment_date))[0]!;
+    if (!inRange(lastPayment.payment_date, range)) continue;
+    const daysDiff = Math.round(
+      (Date.parse(`${lastPayment.payment_date}T00:00:00Z`) - Date.parse(`${r.invoice_date}T00:00:00Z`)) / 86_400_000
+    );
+    if (daysDiff >= 0) {
+      payDaysSum += daysDiff;
+      payDaysCount++;
+    }
+  }
+  const avgDaysToPay = payDaysCount > 0 ? payDaysSum / payDaysCount : null;
+
+  return { totalOutstanding, overdueAmount, overdueInvoicesCount, avgDaysToPay };
+}
+
+/** Top overdue customers for the Receivables page visualization. */
+export function getTopOverdueCustomers(data: Dataset, limit = 5): { customerName: string; overdueAmount: number; invoiceCount: number }[] {
+  const today = REFERENCE_DATE;
+  const map = new Map<string, { name: string; amount: number; count: number }>();
+  for (const r of data.receivables) {
+    const outstanding = r.invoice_amount - r.amount_paid;
+    if (outstanding <= 0 || r.due_date >= today) continue;
+    const cust = data.customerById.get(r.customer_id);
+    const name = cust?.customer_name ?? r.customer_id;
+    let row = map.get(r.customer_id);
+    if (!row) { row = { name, amount: 0, count: 0 }; map.set(r.customer_id, row); }
+    row.amount += outstanding;
+    row.count++;
+  }
+  return [...map.values()]
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, limit)
+    .map(r => ({ customerName: r.name, overdueAmount: r.amount, invoiceCount: r.count }));
+}
+
+/** Page 5 — Top Performers (Haroon §3.5), using not-cancelled filter */
+export function getHaroonTopProducts(data: Dataset, range: DateRange, limit = 5): ProductPerformance[] {
+  const map = new Map<string, ProductPerformance>();
+  for (const o of data.orders) {
+    if (!isNotCancelled(o) || !inRange(o.order_date, range)) continue;
+    const items = data.itemsByOrder.get(o.order_id);
+    if (!items) continue;
+    for (const item of items) {
+      const product = data.productById.get(item.product_id);
+      if (!product) continue;
+      let row = map.get(item.product_id);
+      if (!row) { row = { product, revenue: 0, units: 0, grossProfit: 0, marginPct: 0, orders: 0 }; map.set(item.product_id, row); }
+      row.revenue += item.line_total;
+      row.units += item.quantity;
+      row.grossProfit += item.line_total - item.line_cost;
+      row.orders++;
+    }
+  }
+  return [...map.values()]
+    .map(r => ({ ...r, marginPct: r.revenue > 0 ? (r.grossProfit / r.revenue) * 100 : 0 }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, limit);
+}
+
+export function getHaroonTopCustomers(data: Dataset, range: DateRange, limit = 5): CustomerPerformance[] {
+  const map = new Map<string, CustomerPerformance>();
+  for (const o of data.orders) {
+    if (!isNotCancelled(o) || !inRange(o.order_date, range)) continue;
+    const customer = data.customerById.get(o.customer_id);
+    if (!customer) continue;
+    let row = map.get(o.customer_id);
+    if (!row) { row = { customer, revenue: 0, orders: 0, grossProfit: 0, outstanding: 0 }; map.set(o.customer_id, row); }
+    row.revenue += o.total_amount;
+    row.grossProfit += o.gross_profit;
+    row.orders++;
+  }
+  return [...map.values()]
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, limit);
+}
+
+/** Page 6 — Operational KPIs (Haroon §3.6) */
+export interface OperationalKPIs {
+  avgFulfillmentTimeDays: number | null;
+  returnRatePct: number;
+  repeatCustomerRatePct: number;
+  inventoryTurnover: number | null;
+}
+
+export function calculateOperationalKPIs(data: Dataset, range: DateRange): OperationalKPIs {
+  // Avg Fulfillment Time: avg(delivered_date - order_date) for Delivered orders in range
+  let fulfillSum = 0;
+  let fulfillCount = 0;
+  let returnedCount = 0;
+  let totalNotCancelled = 0;
+  const customerOrders = new Map<string, number>();
+
+  for (const o of data.orders) {
+    if (!inRange(o.order_date, range)) continue;
+    if (o.order_status === "Cancelled") continue;
+    totalNotCancelled++;
+    if (o.order_status === "Returned") returnedCount++;
+
+    // Track customer orders for repeat rate
+    customerOrders.set(o.customer_id, (customerOrders.get(o.customer_id) ?? 0) + 1);
+
+    if (o.order_status === "Delivered" && o.delivered_date) {
+      const days = Math.round(
+        (Date.parse(`${o.delivered_date}T00:00:00Z`) - Date.parse(`${o.order_date}T00:00:00Z`)) / 86_400_000
+      );
+      if (days >= 0) { fulfillSum += days; fulfillCount++; }
+    }
+  }
+
+  const avgFulfillmentTimeDays = fulfillCount > 0 ? fulfillSum / fulfillCount : null;
+  const returnRatePct = totalNotCancelled > 0 ? (returnedCount / totalNotCancelled) * 100 : 0;
+
+  // Repeat Customer Rate
+  const totalCustomers = customerOrders.size;
+  let repeatCustomers = 0;
+  for (const count of customerOrders.values()) {
+    if (count > 1) repeatCustomers++;
+  }
+  const repeatCustomerRatePct = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0;
+
+  // Inventory Turnover: COGS in range / Average Inventory Value
+  let cogs = 0;
+  for (const o of data.orders) {
+    if (!isNotCancelled(o) || !inRange(o.order_date, range)) continue;
+    cogs += o.total_cost;
+  }
+  const invKPIs = calculateHaroonInventory(data);
+  const avgInvValue = invKPIs.totalStockValue; // snapshot = current value; for demo, use as average
+  const inventoryTurnover = avgInvValue > 0 ? cogs / avgInvValue : null;
+
+  return { avgFulfillmentTimeDays, returnRatePct, repeatCustomerRatePct, inventoryTurnover };
+}
+
+/** Monthly fulfillment time trend for Operations page chart. */
+export function calculateMonthlyFulfillmentTrend(data: Dataset, range: DateRange): { month: string; avgDays: number }[] {
+  const map = new Map<string, { sum: number; count: number }>();
+  for (const o of data.orders) {
+    if (o.order_status !== "Delivered" || !o.delivered_date || !inRange(o.order_date, range)) continue;
+    const days = Math.round(
+      (Date.parse(`${o.delivered_date}T00:00:00Z`) - Date.parse(`${o.order_date}T00:00:00Z`)) / 86_400_000
+    );
+    if (days < 0) continue;
+    const m = o.order_date.slice(0, 7);
+    let row = map.get(m);
+    if (!row) { row = { sum: 0, count: 0 }; map.set(m, row); }
+    row.sum += days;
+    row.count++;
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, r]) => ({ month, avgDays: r.count > 0 ? r.sum / r.count : 0 }));
+}
+
+/** Monthly return rate trend for Operations page chart. */
+export function calculateMonthlyReturnTrend(data: Dataset, range: DateRange): { month: string; returnRate: number }[] {
+  const map = new Map<string, { total: number; returned: number }>();
+  for (const o of data.orders) {
+    if (!inRange(o.order_date, range)) continue;
+    if (o.order_status === "Cancelled") continue;
+    const m = o.order_date.slice(0, 7);
+    let row = map.get(m);
+    if (!row) { row = { total: 0, returned: 0 }; map.set(m, row); }
+    row.total++;
+    if (o.order_status === "Returned") row.returned++;
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, r]) => ({ month, returnRate: r.total > 0 ? (r.returned / r.total) * 100 : 0 }));
 }
 
 export interface MonthlyPoint {
@@ -644,119 +1042,222 @@ export interface MetricDefinition {
   sample?: string;
 }
 
+// ======================== HAROON METRIC DEFINITIONS ========================
+// Every definition uses Haroon's exact wording from the Architecture Document.
+
 export const METRIC_INFO: Record<string, MetricDefinition> = {
+  // --- Page 1: Sales Performance ---
+  totalSales: {
+    title: "Total Sales",
+    definition: "The total value of everything sold in the selected date range.",
+    formula: "Sum of quantity × unit price, across every order line, for orders that are not cancelled, where the order date falls in the selected range.",
+    rules: ["Excludes cancelled orders only. All other statuses are included."],
+    sources: ["CustomerOrder", "OrderLine"],
+  },
+  totalOrders: {
+    title: "Total Orders",
+    definition: "The number of orders placed in the selected date range.",
+    formula: "Count of orders that are not cancelled, where the order date falls in the selected range.",
+    rules: ["Excludes cancelled orders only."],
+    sources: ["CustomerOrder"],
+  },
+  avgOrderValue: {
+    title: "Average Order Value",
+    definition: "How much a typical order is worth.",
+    formula: "Total Sales ÷ Total Orders",
+    rules: ["Derived from Total Sales and Total Orders for the same range."],
+    sources: ["CustomerOrder", "OrderLine"],
+  },
+  salesGrowth: {
+    title: "Sales Growth",
+    definition: "How sales in this period compare to the period right before it.",
+    formula: "(Current Period Sales − Previous Period Sales) ÷ Previous Period Sales × 100",
+    rules: ["Previous period is the immediately preceding window of equal length."],
+    sources: ["CustomerOrder", "OrderLine"],
+  },
+  // --- Page 2: Orders & Fulfillment ---
+  ordersPending: {
+    title: "Orders Pending",
+    definition: "Orders still waiting to be processed or shipped.",
+    formula: "Count of orders with status Pending or Processing, where order date falls in the selected range.",
+    rules: [],
+    sources: ["CustomerOrder"],
+  },
+  ordersDelivered: {
+    title: "Orders Delivered",
+    definition: "Orders successfully completed in the range.",
+    formula: "Count of orders with status Delivered, where order date falls in the selected range.",
+    rules: [],
+    sources: ["CustomerOrder"],
+  },
+  ordersCancelled: {
+    title: "Orders Cancelled",
+    definition: "Orders that did not go through.",
+    formula: "Count of orders with status Cancelled, where order date falls in the selected range.",
+    rules: [],
+    sources: ["CustomerOrder"],
+  },
+  fulfillmentRate: {
+    title: "Fulfillment Rate",
+    definition: "The share of placed orders that were actually delivered.",
+    formula: "Orders Delivered ÷ Total Orders × 100",
+    rules: ["Total Orders excludes cancelled orders."],
+    sources: ["CustomerOrder"],
+  },
+  // --- Page 3: Inventory ---
+  totalStockValue: {
+    title: "Total Stock Value",
+    definition: "The value of everything currently sitting in inventory.",
+    formula: "Sum of quantity on hand × unit cost, across all active products.",
+    rules: ["Live snapshot — not affected by the date filter."],
+    sources: ["InventoryPosition", "Product"],
+  },
+  lowStock: {
+    title: "Items Low on Stock",
+    definition: "Products that are close to running out.",
+    formula: "Count of products where quantity on hand > 0 and ≤ reorder threshold.",
+    rules: [],
+    sources: ["InventoryPosition", "Product"],
+  },
+  outOfStock: {
+    title: "Items Out of Stock",
+    definition: "Products with nothing left to sell.",
+    formula: "Count of products where quantity on hand = 0.",
+    rules: [],
+    sources: ["InventoryPosition", "Product"],
+  },
+  activeProducts: {
+    title: "Total Active Products",
+    definition: "How many products are currently sold.",
+    formula: "Count of products marked active.",
+    rules: [],
+    sources: ["Product"],
+  },
+  // --- Page 4: Receivables ---
+  totalOutstanding: {
+    title: "Total Outstanding",
+    definition: "Money the business is still owed by customers right now.",
+    formula: "Sum of invoice amount − paid amount, for invoices with status not equal to Paid.",
+    rules: ["Live snapshot — not affected by the date filter."],
+    sources: ["Receivable"],
+  },
+  overdueAmount: {
+    title: "Overdue Amount",
+    definition: "Money that is not just outstanding but already late.",
+    formula: "Sum of invoice amount − paid amount, where due date is before today and status is not Paid.",
+    rules: [],
+    sources: ["Receivable"],
+  },
+  overdueInvoices: {
+    title: "Overdue Invoices",
+    definition: "How many separate invoices are late.",
+    formula: "Count of invoices where due date is before today and status is not Paid.",
+    rules: [],
+    sources: ["Receivable"],
+  },
+  avgDaysToPay: {
+    title: "Average Days to Pay",
+    definition: "How long customers typically take to pay once invoiced.",
+    formula: "Average of payment date − invoice date, across invoices marked Paid within the selected range.",
+    rules: ["Only fully paid invoices within the selected range are included."],
+    sources: ["Receivable", "Payment"],
+  },
+  // --- Page 5: Top Performers ---
+  topProducts: {
+    title: "Top Products by Sales",
+    definition: "The five products bringing in the most revenue.",
+    formula: "Rank every product by sum of quantity × unit price across its order lines, excluding cancelled orders. Show the top five.",
+    rules: ["Uses the selected date range."],
+    sources: ["CustomerOrder", "OrderLine", "Product"],
+  },
+  topCustomers: {
+    title: "Top Customers by Sales",
+    definition: "The five customers bringing in the most revenue.",
+    formula: "Rank every customer by sum of their order totals, excluding cancelled orders. Show the top five.",
+    rules: ["Uses the selected date range."],
+    sources: ["CustomerOrder", "Customer"],
+  },
+  // --- Page 6: Operational KPIs ---
+  avgFulfillmentTime: {
+    title: "Average Fulfillment Time",
+    definition: "How many days it takes on average from order to delivery.",
+    formula: "Average of delivered date − order date, across orders with status Delivered in the selected range.",
+    rules: [],
+    sources: ["CustomerOrder"],
+  },
+  returnRate: {
+    title: "Return Rate",
+    definition: "The share of orders that came back as returns.",
+    formula: "Returned Orders ÷ Total Orders × 100",
+    rules: ["Total Orders excludes cancelled orders."],
+    sources: ["CustomerOrder"],
+  },
+  repeatCustomerRate: {
+    title: "Repeat Customer Rate",
+    definition: "How many customers ordered more than once in the range.",
+    formula: "Customers with more than one order ÷ Total unique customers × 100",
+    rules: ["Only non-cancelled orders in the selected range."],
+    sources: ["CustomerOrder", "Customer"],
+  },
+  inventoryTurnover: {
+    title: "Inventory Turnover",
+    definition: "How efficiently stock is being sold and replaced.",
+    formula: "Cost of Goods Sold in selected range ÷ Average Inventory Value.",
+    rules: [],
+    sources: ["CustomerOrder", "InventoryPosition", "Product"],
+  },
+  // --- Legacy (kept for AI engine / Action Center) ---
   netSales: {
     title: "Net Sales",
-    definition: "Total revenue generated from qualifying customer orders minus customer refunds and returns.",
-    formula: "Net Sales = Gross Sales - Refunds",
-    rules: [
-      "Qualifying order statuses: Shipped, Delivered, Returned, Partially Returned.",
-      "Cancelled, Pending, and Confirmed orders are excluded from sales totals.",
-      "Returns reduce Net Sales in the period the refund is recorded.",
-    ],
-    sources: ["orders.csv", "returns.csv"],
-    sample: "Gross Sales PKR 4.38B - Returns PKR 101.4M = Net Sales PKR 4.28B",
+    definition: "Total revenue from qualifying orders minus refunds and returns.",
+    formula: "Net Sales = Gross Sales − Refunds",
+    rules: ["Uses qualifying statuses: Shipped, Delivered, Returned, Partially Returned."],
+    sources: ["orders", "returns"],
   },
   grossProfit: {
     title: "Gross Profit & Margin",
-    definition: "The profit financial margin earned after subtracting product unit manufacturing/purchase costs from gross sales.",
-    formula: "Gross Profit = Sum(Line Total - Line Cost); Margin % = (Gross Profit / Gross Sales) * 100",
-    rules: [
-      "Calculated at item level: (unit_price - unit_cost) * quantity.",
-      "Only qualifying order items are included.",
-      "Refunds/returns do not alter standard COGS cost baselines unless restocked.",
-    ],
-    sources: ["orders.csv", "order_items.csv", "products.csv"],
-    sample: "Gross Sales PKR 4.38B - Cost of Goods PKR 3.50B = Profit PKR 877.7M (20.0%)",
-  },
-  totalOrders: {
-    title: "Total Qualifying Orders",
-    definition: "Count of customer orders that reached a fulfilled or shipped status.",
-    formula: "Total Orders = Count(orders where order_status in QUALIFYING_STATUSES)",
-    rules: [
-      "Qualifying statuses: Shipped, Delivered, Returned, Partially Returned.",
-      "Cancelled, Pending, and Confirmed orders are tracked separately in Order Operations.",
-    ],
-    sources: ["orders.csv"],
+    definition: "Profit margin after subtracting product costs from gross sales.",
+    formula: "Gross Profit = Sum(Line Total − Line Cost); Margin % = Gross Profit ÷ Gross Sales × 100",
+    rules: ["Only qualifying order items are included."],
+    sources: ["orders", "order_items", "products"],
   },
   receivables: {
-    title: "Outstanding Receivables & Overdue",
+    title: "Outstanding Receivables",
     definition: "Uncollected payment balances on issued customer invoices.",
-    formula: "Outstanding Amount = Invoice Amount - Amount Paid",
-    rules: [
-      "Paid: Outstanding Amount = 0.",
-      "Current: Outstanding balance exists and due date is > 14 days in the future.",
-      "Due Soon: Outstanding balance exists and due date is within 14 days.",
-      "Overdue: due_date < reference_date (2026-09-01) AND outstanding_amount > 0.",
-    ],
-    sources: ["receivables.csv", "payments.csv", "customers.csv"],
-    sample: "Total Outstanding PKR 264.0M | Overdue PKR 91.3M (34.58%)",
+    formula: "Outstanding = Invoice Amount − Amount Paid",
+    rules: ["Live snapshot — not affected by the date filter."],
+    sources: ["receivables", "payments"],
   },
   inventoryValue: {
-    title: "Inventory Value & Health",
-    definition: "Total monetary valuation of physical stock held in warehouses and classification by availability.",
-    formula: "Quantity Available = Quantity On Hand - Quantity Reserved; Value = On Hand * Unit Cost",
-    rules: [
-      "In Stock: available > reorder_level",
-      "Low Stock: 0 < available <= reorder_level",
-      "Out of Stock: available = 0",
-      "Inventory Discrepancy: available < 0 (Reserved units exceed units on hand)",
-    ],
-    sources: ["inventory.csv", "products.csv"],
-    sample: "52 In Stock, 11 Low Stock, 7 Out of Stock, 2 Discrepancy",
+    title: "Inventory Value",
+    definition: "Total monetary valuation of physical stock held in warehouses.",
+    formula: "Value = Quantity On Hand × Unit Cost",
+    rules: ["Live snapshot — not affected by the date filter."],
+    sources: ["inventory", "products"],
   },
   onTimeDelivery: {
     title: "On-Time Delivery Rate",
-    definition: "Percentage of delivered shipments that reached the customer on or before the promised required date.",
-    formula: "On-Time Rate = (On-Time Deliveries / Total Completed Deliveries) * 100",
-    rules: [
-      "On-Time: delivered_date <= required_date.",
-      "Delayed: delivered_date > required_date.",
-      "Lead Time: delivered_date - order_date.",
-      "Overdue Open Order: Order not delivered and required_date < 2026-09-01.",
-    ],
-    sources: ["orders.csv"],
-    sample: "1,775 On-Time / 2,369 Completed = 74.93% On-Time Rate",
-  },
-  topProducts: {
-    title: "Top Products Ranking",
-    definition: "Products ranked by total realized gross revenue from qualifying sales orders.",
-    formula: "Product Revenue = Sum(line_total) for qualifying order items",
-    rules: [
-      "Excludes line items from cancelled or pending orders.",
-      "Margin % = (Gross Profit / Line Total) * 100",
-    ],
-    sources: ["order_items.csv", "orders.csv", "products.csv"],
-  },
-  topCustomers: {
-    title: "Top Customers Ranking",
-    definition: "Key accounts ranked by total purchase volume across qualifying sales orders.",
-    formula: "Customer Sales = Sum(total_amount) for qualifying orders",
-    rules: [
-      "Outstanding balances are matched directly from customer invoice records.",
-    ],
-    sources: ["orders.csv", "customers.csv", "receivables.csv"],
+    definition: "Percentage of deliveries that arrived on or before the promised date.",
+    formula: "On-Time Rate = On-Time Deliveries ÷ Total Completed × 100",
+    rules: ["On-Time: delivered_date ≤ required_date."],
+    sources: ["orders"],
   },
   orderStatus: {
-    title: "Order Status Operations",
-    definition: "Comprehensive breakdown of all orders across their lifecycle stages.",
-    formula: "Group orders by order_status and sum total_amount",
-    rules: [
-      "Includes all 3,200 orders in the dataset regardless of status.",
-      "Only qualifying statuses contribute to Net Sales metrics.",
-    ],
-    sources: ["orders.csv"],
+    title: "Order Status Breakdown",
+    definition: "Breakdown of all orders across their lifecycle stages.",
+    formula: "Group orders by order_status",
+    rules: [],
+    sources: ["orders"],
   },
   actionCenter: {
-    title: "Management Action Center",
-    definition: "Automated business alerts highlighting operational bottlenecks and financial risks.",
-    formula: "Real-time rule evaluation over inventory, receivables, and order delivery tables",
+    title: "Action Center",
+    definition: "Automated alerts highlighting operational bottlenecks and risks.",
+    formula: "Rule evaluation over inventory, receivables, and delivery data",
     rules: [
-      "Critical severity: Out-of-stock items, Overdue invoices.",
-      "Warning severity: Low-stock items, Delayed deliveries, Overdue open orders.",
-      "Info severity: Inventory discrepancies.",
+      "Critical: Out-of-stock items, Overdue invoices.",
+      "Warning: Low-stock items, Delayed deliveries.",
     ],
-    sources: ["inventory.csv", "receivables.csv", "orders.csv"],
+    sources: ["inventory", "receivables", "orders"],
   },
 };
 
