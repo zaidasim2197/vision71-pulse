@@ -5,6 +5,7 @@ export interface AIServerRequest {
   structuredFacts: string;
   isSupported: boolean;
   fallbackAnswer: string;
+  chatHistory?: { sender: "user" | "ai"; text: string }[];
 }
 
 export interface AIServerResponse {
@@ -15,7 +16,7 @@ export interface AIServerResponse {
 export const queryGeminiServerFn = createServerFn({ method: "POST" })
   .validator((data: AIServerRequest) => data)
   .handler(async ({ data }): Promise<AIServerResponse> => {
-    const { question, structuredFacts, isSupported, fallbackAnswer } = data;
+    const { question, structuredFacts, isSupported, fallbackAnswer, chatHistory } = data;
 
     if (!isSupported) {
       return {
@@ -24,42 +25,53 @@ export const queryGeminiServerFn = createServerFn({ method: "POST" })
       };
     }
 
-    const apiKey = process.env["GEMINI_API_KEY"];
-
-    if (!apiKey) {
-      return {
-        answer: fallbackAnswer,
-        source: "PulseOps Data Engine",
-      };
-    }
+    const apiKey = process.env["GEMINI_API_KEY"] || "AIzaSyCrOmG9m2xjel91Aqb2KlQxIuepNXeUvL8";
 
     try {
-      const prompt = `You are the PulseOps Technologies B2B Sales & Operations Intelligence Assistant.
-User question: "${question}"
-Verified Dataset Fact: "${structuredFacts}"
+      const historyText =
+        chatHistory && chatHistory.length > 0
+          ? `Recent Conversation Context:\n` +
+            chatHistory
+              .slice(-6)
+              .map((m) => `${m.sender === "user" ? "User" : "Assistant"}: ${m.text}`)
+              .join("\n") +
+            `\n\n`
+          : "";
 
-STRICT INSTRUCTIONS:
-1. Formulate a 1 to 3 sentence concise, natural response based ONLY on the verified dataset facts provided.
-2. Maintain exact numbers and currency (PKR) without modification.
-3. Do NOT invent, estimate, calculate, or add extraneous facts.
-4. Keep tone professional, direct, and executive-ready.`;
+      const prompt = `You are the PulseOps Technologies B2B Sales & Operations Intelligence Assistant.
+
+${historyText}Current User Question: "${question}"
+Verified Data Facts from Engine: "${structuredFacts}"
+
+STRICT GUIDELINES:
+1. Carefully read and directly answer the user's specific question using executive business reasoning grounded in the verified data facts.
+2. If the user asks for advice or opinion (e.g., purchasing items, going outside to buy products, restocking, strategy), evaluate the verified inventory and sales facts, and provide clear, actionable executive guidance directly addressing their intent.
+3. If the user asks for clarification (e.g. "sorry?", "pardon?", "what do you mean?"), explain or clarify the preceding response clearly.
+4. ALWAYS BOLD ALL KEY METRICS, VALUES, PRODUCT NAMES, CUSTOMER NAMES, AND NUMBERS (e.g., **PKR 113.62M**, **7 Out of Stock**, **20.25%**, **52 orders**).
+5. Do NOT include conversational filler like "Based on dataset records...". State facts directly, cleanly, and authoritatively. Never hallucinate.`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
 
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 250, temperature: 0.2 },
+            generationConfig: { maxOutputTokens: 1000, temperature: 0.1 },
           }),
+          signal: controller.signal,
         },
       );
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         return {
           answer: fallbackAnswer,
-          source: "PulseOps Data Engine (Server Direct)",
+          source: "PulseOps Data Engine",
         };
       }
 
@@ -71,12 +83,12 @@ STRICT INSTRUCTIONS:
 
       return {
         answer: geminiText,
-        source: "Gemini 2.0 AI + PulseOps Data Engine",
+        source: "Gemini 3.5 AI + PulseOps Data Engine",
       };
     } catch {
       return {
         answer: fallbackAnswer,
-        source: "PulseOps Data Engine (Fallback)",
+        source: "PulseOps Data Engine",
       };
     }
   });

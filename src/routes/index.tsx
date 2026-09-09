@@ -74,7 +74,7 @@ function Index() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-              Good morning, Team 👋
+              Good morning, Team
             </h1>
             <Badge variant="outline" className="text-[10px] font-mono border-primary/30 text-primary bg-primary/5">
               Live Operations

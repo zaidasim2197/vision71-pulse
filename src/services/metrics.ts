@@ -362,6 +362,12 @@ export function getTopProducts(data: Dataset, range: DateRange, limit?: number):
   return limit ? rows.slice(0, limit) : rows;
 }
 
+export function getTopProductsByProfit(data: Dataset, range: DateRange, limit?: number): ProductPerformance[] {
+  const products = getTopProducts(data, range);
+  const sorted = [...products].sort((a, b) => b.grossProfit - a.grossProfit);
+  return limit ? sorted.slice(0, limit) : sorted;
+}
+
 export interface CustomerPerformance {
   customer: Customer;
   revenue: number;
@@ -391,6 +397,110 @@ export function getTopCustomers(data: Dataset, range: DateRange, limit?: number)
   }
   const rows = [...map.values()].sort((a, b) => b.revenue - a.revenue);
   return limit ? rows.slice(0, limit) : rows;
+}
+
+export interface CityPerformance {
+  city: string;
+  orders: number;
+  revenue: number;
+  customersCount: number;
+}
+
+export function getCityPerformance(data: Dataset, range: DateRange, limit?: number): CityPerformance[] {
+  const cityMap = new Map<string, CityPerformance>();
+  const customersInCity = new Map<string, Set<string>>();
+
+  for (const o of data.orders) {
+    if (!isQualifyingOrder(o) || !inRange(o.order_date, range)) continue;
+    const customer = data.customerById.get(o.customer_id);
+    const city = customer?.city ?? "Unknown";
+    let row = cityMap.get(city);
+    if (!row) {
+      row = { city, orders: 0, revenue: 0, customersCount: 0 };
+      cityMap.set(city, row);
+    }
+    row.orders += 1;
+    row.revenue += o.total_amount;
+
+    let custSet = customersInCity.get(city);
+    if (!custSet) {
+      custSet = new Set<string>();
+      customersInCity.set(city, custSet);
+    }
+    custSet.add(o.customer_id);
+  }
+
+  const rows = [...cityMap.values()]
+    .map((r) => ({
+      ...r,
+      customersCount: customersInCity.get(r.city)?.size ?? 0,
+    }))
+    .sort((a, b) => b.orders - a.orders);
+
+  return limit ? rows.slice(0, limit) : rows;
+}
+
+export interface IndustryPerformance {
+  industry: string;
+  orders: number;
+  revenue: number;
+  customersCount: number;
+}
+
+export function getIndustryPerformance(data: Dataset, range: DateRange, limit?: number): IndustryPerformance[] {
+  const indMap = new Map<string, IndustryPerformance>();
+  const custInInd = new Map<string, Set<string>>();
+
+  for (const o of data.orders) {
+    if (!isQualifyingOrder(o) || !inRange(o.order_date, range)) continue;
+    const customer = data.customerById.get(o.customer_id);
+    const industry = customer?.industry ?? "Unknown";
+    let row = indMap.get(industry);
+    if (!row) {
+      row = { industry, orders: 0, revenue: 0, customersCount: 0 };
+      indMap.set(industry, row);
+    }
+    row.orders += 1;
+    row.revenue += o.total_amount;
+
+    let custSet = custInInd.get(industry);
+    if (!custSet) {
+      custSet = new Set<string>();
+      custInInd.set(industry, custSet);
+    }
+    custSet.add(o.customer_id);
+  }
+
+  const rows = [...indMap.values()]
+    .map((r) => ({
+      ...r,
+      customersCount: custInInd.get(r.industry)?.size ?? 0,
+    }))
+    .sort((a, b) => b.orders - a.orders);
+
+  return limit ? rows.slice(0, limit) : rows;
+}
+
+export interface ChannelPerformance {
+  channel: string;
+  orders: number;
+  revenue: number;
+}
+
+export function getChannelPerformance(data: Dataset, range: DateRange): ChannelPerformance[] {
+  const chanMap = new Map<string, ChannelPerformance>();
+  for (const o of data.orders) {
+    if (!isQualifyingOrder(o) || !inRange(o.order_date, range)) continue;
+    const channel = o.sales_channel || "Direct";
+    let row = chanMap.get(channel);
+    if (!row) {
+      row = { channel, orders: 0, revenue: 0 };
+      chanMap.set(channel, row);
+    }
+    row.orders += 1;
+    row.revenue += o.total_amount;
+  }
+  return [...chanMap.values()].sort((a, b) => b.revenue - a.revenue);
 }
 
 export interface Alert {

@@ -33,6 +33,58 @@ const SUGGESTIONS = [
   "How many orders were cancelled?",
 ];
 
+function FormattedMarkdown({ text }: { text: string }) {
+  const lines = text.split("\n");
+
+  return (
+    <div className="space-y-1">
+      {lines.map((line, lineIdx) => {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+          return <div key={lineIdx} className="h-1" />;
+        }
+
+        const parseBold = (str: string) => {
+          const parts = str.split(/(\*\*.*?\*\*)/g);
+          return parts.map((part, pIdx) => {
+            if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+              return (
+                <strong key={pIdx} className="font-bold text-foreground font-semibold">
+                  {part.slice(2, -2)}
+                </strong>
+              );
+            }
+            return part;
+          });
+        };
+
+        const numMatch = trimmed.match(/^(\d+)[\.\)]\s+(.*)/);
+        if (numMatch) {
+          return (
+            <div key={lineIdx} className="flex items-start gap-1.5 pl-0.5 my-0.5">
+              <span className="font-bold text-primary shrink-0">{numMatch[1]}.</span>
+              <div>{parseBold(numMatch[2]!)}</div>
+            </div>
+          );
+        }
+
+        const bulletMatch = trimmed.match(/^[\-\*]\s+(.*)/);
+        if (bulletMatch) {
+          return (
+            <div key={lineIdx} className="flex items-start gap-1.5 pl-1.5 my-0.5">
+              <span className="text-primary font-bold shrink-0">•</span>
+              <div>{parseBold(bulletMatch[1]!)}</div>
+            </div>
+          );
+        }
+
+        return <p key={lineIdx}>{parseBold(line)}</p>;
+      })}
+    </div>
+  );
+}
+
 function AIAssistantPage() {
   const { dataset, dateRange } = useDataset();
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -74,12 +126,21 @@ function AIAssistantPage() {
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
+    // Prepare chat history payload for contextual follow-up resolution
+    const chatHistoryPayload = messages
+      .filter((m) => m.id !== "welcome" && m.text)
+      .slice(-10)
+      .map((m) => ({
+        sender: m.sender,
+        text: m.text,
+      }));
+
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
 
     try {
-      // 1. Run deterministic query engine locally over dataset
-      const localResult = queryAiEngine(q, dataset, dateRange);
+      // 1. Run deterministic query engine locally over dataset with history context
+      const localResult = queryAiEngine(q, dataset, dateRange, chatHistoryPayload);
 
       // 2. Call secure server function queryGeminiServerFn (which holds process.env.GEMINI_API_KEY)
       let aiText = localResult.directAnswer;
@@ -93,6 +154,7 @@ function AIAssistantPage() {
               structuredFacts: localResult.structuredFacts,
               isSupported: localResult.isSupported,
               fallbackAnswer: localResult.directAnswer,
+              chatHistory: chatHistoryPayload,
             },
           });
           if (res?.answer) aiText = res.answer;
@@ -138,21 +200,21 @@ function AIAssistantPage() {
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-3 sm:px-6 py-3 sm:py-5 h-full flex flex-col min-h-0 overflow-hidden">
+    <div className="w-full max-w-6xl mx-auto px-2.5 sm:px-4 py-2 sm:py-3.5 h-full flex flex-col min-h-0 overflow-hidden">
       {/* Outer Bento Container taking 100% available space */}
-      <div className="bento-card flex-1 flex flex-col min-h-0 overflow-hidden p-4 sm:p-6 md:p-8 border-border/80 shadow-md">
+      <div className="bento-card flex-1 flex flex-col min-h-0 overflow-hidden p-3.5 sm:p-5 md:p-6 border-border/80 shadow-sm">
         {/* Header (Fixed at top inside container) */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-border/50 shrink-0 gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-border/50 shrink-0 gap-2.5">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-foreground flex items-center gap-2">
-                <Sparkles className="h-6 w-6 text-primary animate-pulse" /> AI Business Assistant
+              <h1 className="text-lg sm:text-xl font-extrabold tracking-tight text-foreground flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-primary animate-pulse" /> AI Business Assistant
               </h1>
-              <Badge variant="outline" className="text-xs font-mono border-primary/30 text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
-                Gemini 2.0 + Data Engine
+              <Badge variant="outline" className="text-[11px] font-mono border-primary/30 text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                Gemini 3.5 + Data Engine
               </Badge>
             </div>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Strictly dataset-backed executive intelligence powered by Gemini 2.0 & PulseOps Data Engine
             </p>
           </div>
@@ -171,31 +233,31 @@ function AIAssistantPage() {
                 },
               ])
             }
-            className="h-9 text-xs font-medium text-muted-foreground hover:text-foreground gap-2 rounded-2xl border-border/60 hover:bg-muted shrink-0 self-start sm:self-auto"
+            className="h-8 text-xs font-medium text-muted-foreground hover:text-foreground gap-1.5 rounded-xl border-border/60 hover:bg-muted shrink-0 self-start sm:self-auto px-3"
           >
-            <Trash2 className="h-4 w-4" /> Clear Chat
+            <Trash2 className="h-3.5 w-3.5" /> Clear Chat
           </Button>
         </div>
 
         {/* Messages Internal Scroll Area with custom sleek scrollbar */}
-        <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto py-5 pr-1 space-y-5">
+        <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto py-3 pr-1 space-y-3.5">
           {messages.map((msg) => (
             <div
               key={msg.id}
-              className={`flex items-start gap-3 sm:gap-4 ${msg.sender === "user" ? "flex-row-reverse" : "flex-row"}`}
+              className={`flex items-start gap-2.5 sm:gap-3 ${msg.sender === "user" ? "flex-row-reverse" : "flex-row"}`}
             >
               <div
-                className={`flex h-9 w-9 items-center justify-center rounded-2xl shrink-0 shadow-2xs ${
+                className={`flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl shrink-0 shadow-2xs ${
                   msg.sender === "user"
                     ? "bg-primary text-primary-foreground font-bold text-xs"
                     : "bg-primary/10 border border-primary/20 text-primary"
                 }`}
               >
-                {msg.sender === "user" ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+                {msg.sender === "user" ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
               </div>
 
               <div
-                className={`group relative max-w-[88%] sm:max-w-[78%] rounded-3xl p-4 sm:p-5 text-xs sm:text-sm leading-relaxed shadow-2xs ${
+                className={`group relative max-w-[84%] sm:max-w-[72%] md:max-w-[65%] rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-[13px] leading-relaxed shadow-2xs ${
                   msg.sender === "user"
                     ? "bg-primary text-primary-foreground rounded-tr-xs"
                     : msg.isError
@@ -203,36 +265,46 @@ function AIAssistantPage() {
                     : "bg-muted/40 border border-border/70 rounded-tl-xs text-foreground"
                 }`}
               >
-                <p className="whitespace-pre-wrap">{msg.text}</p>
+                <FormattedMarkdown text={msg.text} />
 
-                {/* Footer metadata */}
-                <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-[11px] opacity-75 font-mono gap-3">
-                  <span>{msg.timestamp}</span>
-                  {msg.sourceTag && (
-                    <span className="flex items-center gap-1 font-sans font-medium text-primary">
-                      <ShieldCheck className="h-3.5 w-3.5" /> {msg.sourceTag}
-                    </span>
-                  )}
+                {/* Footer metadata bar with copy icon at bottom-right */}
+                <div className="mt-2 pt-2 border-t border-border/30 flex items-center justify-between text-[10px] sm:text-[11px] font-mono gap-2.5">
+                  <div className="flex items-center gap-1.5 opacity-75">
+                    <span>{msg.timestamp}</span>
+                    {msg.sourceTag && (
+                      <span className="flex items-center gap-1 font-sans font-medium text-primary">
+                        <ShieldCheck className="h-3 w-3" /> {msg.sourceTag}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Copy icon button in footer bar */}
+                  <button
+                    onClick={() => handleCopy(msg.id, msg.text)}
+                    className={`p-1 rounded-md opacity-0 group-hover:opacity-100 transition-all duration-200 ${
+                      msg.sender === "user"
+                        ? "hover:bg-white/20 text-primary-foreground/80 hover:text-primary-foreground"
+                        : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                    }`}
+                    title="Copy message"
+                  >
+                    {copiedId === msg.id ? (
+                      <Check className="h-3 w-3 text-success" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </button>
                 </div>
-
-                {/* Copy button */}
-                <button
-                  onClick={() => handleCopy(msg.id, msg.text)}
-                  className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground"
-                  title="Copy response"
-                >
-                  {copiedId === msg.id ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
-                </button>
               </div>
             </div>
           ))}
 
           {loading && (
-            <div className="flex items-start gap-3 sm:gap-4">
-              <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-primary/10 border border-primary/20 text-primary shrink-0">
-                <Bot className="h-4 w-4 animate-pulse" />
+            <div className="flex items-start gap-2.5 sm:gap-3">
+              <div className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl bg-primary/10 border border-primary/20 text-primary shrink-0">
+                <Bot className="h-3.5 w-3.5 animate-pulse" />
               </div>
-              <div className="bg-muted/40 border border-border/70 rounded-3xl rounded-tl-xs p-4 sm:p-5 text-xs sm:text-sm text-muted-foreground flex items-center gap-2.5 shadow-2xs">
+              <div className="bg-muted/40 border border-border/70 rounded-2xl rounded-tl-xs px-3.5 py-2.5 text-xs text-muted-foreground flex items-center gap-2 shadow-2xs">
                 <span className="animate-pulse font-medium">Analyzing PulseOps dataset records & running data verification...</span>
               </div>
             </div>
@@ -240,20 +312,20 @@ function AIAssistantPage() {
         </div>
 
         {/* Pinned Bottom Area: Prompt Suggestions & Input Bar */}
-        <div className="shrink-0 pt-4 border-t border-border/50 space-y-3 bg-card/50">
+        <div className="shrink-0 pt-3 border-t border-border/50 space-y-2.5 bg-card/50">
           {/* Prompt Suggestions (Clean Wrap Pills without nested scrollbars) */}
           {messages.length < 5 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                <HelpCircle className="h-3.5 w-3.5 text-primary" />
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+                <HelpCircle className="h-3 w-3 text-primary" />
                 <span>Suggested dataset questions:</span>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-1.5">
                 {SUGGESTIONS.map((s, i) => (
                   <button
                     key={i}
                     onClick={() => handleSend(s)}
-                    className="px-3.5 py-1.5 text-xs font-medium rounded-full border border-border/70 bg-card hover:bg-primary/10 hover:border-primary/40 hover:text-primary transition-all text-left shadow-2xs"
+                    className="px-2.5 py-1 text-[11px] font-medium rounded-full border border-border/70 bg-card hover:bg-primary/10 hover:border-primary/40 hover:text-primary transition-all text-left shadow-2xs"
                   >
                     {s}
                   </button>
@@ -275,15 +347,15 @@ function AIAssistantPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               disabled={loading}
-              className="h-12 text-xs sm:text-sm rounded-full border-border/70 bg-muted/20 px-5 shadow-xs focus-visible:ring-primary focus-visible:ring-2"
+              className="h-10 sm:h-10 text-xs rounded-full border-border/70 bg-muted/20 px-4 shadow-xs focus-visible:ring-primary focus-visible:ring-2"
             />
             <Button
               type="submit"
               disabled={!input.trim() || loading}
-              className="h-12 px-6 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs sm:text-sm gap-2 shadow-xs shrink-0"
+              className="h-10 sm:h-10 px-5 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold text-xs gap-1.5 shadow-xs shrink-0"
             >
               <span>Send</span>
-              <Send className="h-4 w-4" />
+              <Send className="h-3.5 w-3.5" />
             </Button>
           </form>
         </div>
