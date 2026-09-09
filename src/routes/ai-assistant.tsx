@@ -1,12 +1,29 @@
 import { useState, useRef, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useDataset } from "@/components/providers/DatasetProvider";
-import { queryAiEngine } from "@/services/aiEngine";
+import { queryAiEngine, type ChartConfig } from "@/services/aiEngine";
 import { queryGeminiServerFn } from "@/services/aiServer";
-import { Sparkles, Send, Bot, User, Copy, Trash2, Check, ShieldCheck, HelpCircle } from "lucide-react";
+import { formatCompactPKR, formatPKR, formatChartAxisTick } from "@/services/metrics";
+import { Sparkles, Send, Bot, User, Copy, Trash2, Check, ShieldCheck, HelpCircle, BarChart3, Maximize2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area,
+  Legend,
+} from "recharts";
 
 export const Route = createFileRoute("/ai-assistant")({
   component: AIAssistantPage,
@@ -19,6 +36,350 @@ interface ChatMessage {
   sourceTag?: string;
   isError?: boolean;
   timestamp: string;
+  chartConfig?: ChartConfig | undefined;
+}
+
+const CHART_COLORS = [
+  "hsl(158, 64%, 40%)", // Primary emerald
+  "hsl(175, 70%, 41%)", // Teal
+  "hsl(199, 89%, 48%)", // Sky
+  "hsl(38, 92%, 50%)",  // Amber
+  "hsl(262, 83%, 58%)", // Violet
+  "hsl(340, 82%, 52%)", // Rose
+];
+
+function CustomChartTooltip({ active, payload, label, formatValue }: any) {
+  if (active && payload && payload.length) {
+    const dataItem = payload[0];
+    const val = dataItem.value;
+    const formatted =
+      formatValue === "pkr"
+        ? formatPKR(val)
+        : formatValue === "pct"
+        ? `${val.toFixed(1)}%`
+        : val.toLocaleString();
+
+    return (
+      <div className="bg-popover/95 border border-border/80 px-2.5 py-1.5 rounded-xl shadow-lg backdrop-blur-md text-xs">
+        <p className="font-semibold text-popover-foreground">{label || dataItem.name}</p>
+        <p className="text-primary font-mono font-bold mt-0.5">{formatted}</p>
+      </div>
+    );
+  }
+  return null;
+}
+
+function InlineChatChart({ config }: { config: ChartConfig }) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  if (!config || !config.data || config.data.length === 0) return null;
+
+  const { type, title, data, formatValue = "pkr" } = config;
+
+  return (
+    <div className="mt-2.5 pt-2.5 border-t border-border/40 w-full">
+      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+        <h4 className="text-[11px] font-bold tracking-tight text-foreground flex items-center gap-1.5 shrink-0">
+          <BarChart3 className="h-3.5 w-3.5 text-primary shrink-0" />
+          {title}
+        </h4>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[10px] font-mono text-muted-foreground uppercase px-2 py-0.5 bg-muted/60 rounded-full border border-border/40">
+            {type} chart
+          </span>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-1 text-[10px] font-semibold text-primary bg-primary/10 hover:bg-primary/20 px-2 py-0.5 rounded-md border border-primary/25 transition-all cursor-pointer shadow-2xs"
+            title="Preview Fullscreen Chart"
+          >
+            <Maximize2 className="h-3 w-3" />
+            Expand
+          </button>
+        </div>
+      </div>
+
+      <div className="w-full h-60 bg-card/80 border border-border/60 rounded-xl p-2 shadow-2xs">
+        <ResponsiveContainer width="100%" height="100%">
+          {type === "line" ? (
+            <LineChart data={data} margin={{ top: 12, right: 12, left: 6, bottom: 28 }}>
+              <XAxis
+                dataKey="name"
+                stroke="#888888"
+                fontSize={9}
+                tickLine={false}
+                axisLine={false}
+                interval={0}
+                angle={-20}
+                textAnchor="end"
+                height={32}
+                tickFormatter={(str) => (typeof str === "string" && str.length > 14 ? `${str.substring(0, 12)}...` : str)}
+              />
+              <YAxis
+                stroke="#888888"
+                fontSize={9}
+                width={48}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => formatChartAxisTick(v, formatValue)}
+              />
+              <Tooltip content={<CustomChartTooltip formatValue={formatValue} />} />
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke="hsl(158, 64%, 40%)"
+                strokeWidth={2.5}
+                dot={{ r: 3, fill: "hsl(158, 64%, 40%)" }}
+                activeDot={{ r: 5 }}
+              />
+            </LineChart>
+          ) : type === "area" ? (
+            <AreaChart data={data} margin={{ top: 12, right: 12, left: 6, bottom: 28 }}>
+              <defs>
+                <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="hsl(158, 64%, 40%)" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="hsl(158, 64%, 40%)" stopOpacity={0.0} />
+                </linearGradient>
+              </defs>
+              <XAxis
+                dataKey="name"
+                stroke="#888888"
+                fontSize={9}
+                tickLine={false}
+                axisLine={false}
+                interval={0}
+                angle={-20}
+                textAnchor="end"
+                height={32}
+                tickFormatter={(str) => (typeof str === "string" && str.length > 14 ? `${str.substring(0, 12)}...` : str)}
+              />
+              <YAxis
+                stroke="#888888"
+                fontSize={9}
+                width={48}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => formatChartAxisTick(v, formatValue)}
+              />
+              <Tooltip content={<CustomChartTooltip formatValue={formatValue} />} />
+              <Area
+                type="monotone"
+                dataKey="value"
+                stroke="hsl(158, 64%, 40%)"
+                strokeWidth={2}
+                fillOpacity={1}
+                fill="url(#chartGrad)"
+              />
+            </AreaChart>
+          ) : type === "pie" ? (
+            <PieChart>
+              <Tooltip content={<CustomChartTooltip formatValue={formatValue} />} />
+              <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "4px" }} />
+              <Pie
+                data={data}
+                cx="50%"
+                cy="42%"
+                innerRadius={28}
+                outerRadius={55}
+                paddingAngle={4}
+                dataKey="value"
+              >
+                {data.map((_, index) => (
+                  <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                ))}
+              </Pie>
+            </PieChart>
+          ) : (
+            <BarChart data={data} margin={{ top: 12, right: 12, left: 6, bottom: 28 }}>
+              <XAxis
+                dataKey="name"
+                stroke="#888888"
+                fontSize={9}
+                tickLine={false}
+                axisLine={false}
+                interval={0}
+                angle={-20}
+                textAnchor="end"
+                height={32}
+                tickFormatter={(str) => (typeof str === "string" && str.length > 14 ? `${str.substring(0, 12)}...` : str)}
+              />
+              <YAxis
+                stroke="#888888"
+                fontSize={9}
+                width={48}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => formatChartAxisTick(v, formatValue)}
+              />
+              <Tooltip content={<CustomChartTooltip formatValue={formatValue} />} />
+              <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={45}>
+                {data.map((_, index) => (
+                  <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+
+      {isModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-md animate-in fade-in duration-200"
+          onClick={() => setIsModalOpen(false)}
+        >
+          <div
+            className="relative bg-card border border-border/80 rounded-2xl shadow-2xl p-4 sm:p-6 w-[95vw] sm:w-full max-w-4xl max-h-[92vh] flex flex-col gap-3 animate-in zoom-in-95 duration-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border/50 pb-2.5 shrink-0">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-primary shrink-0" />
+                <h3 className="text-sm sm:text-base font-bold text-foreground truncate max-w-[200px] sm:max-w-md">{title}</h3>
+                <Badge variant="outline" className="text-[10px] sm:text-xs uppercase font-mono bg-muted/60 shrink-0">
+                  {type} chart
+                </Badge>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsModalOpen(false)}
+                className="h-8 w-8 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer shrink-0"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="w-full h-[320px] sm:h-[450px] pt-1">
+              <ResponsiveContainer width="100%" height="100%">
+                {type === "line" ? (
+                  <LineChart data={data} margin={{ top: 15, right: 20, left: 10, bottom: 45 }}>
+                    <XAxis
+                      dataKey="name"
+                      stroke="#888888"
+                      fontSize={10}
+                      tickLine={false}
+                      axisLine={false}
+                      interval={0}
+                      angle={-25}
+                      textAnchor="end"
+                      height={45}
+                      tickFormatter={(str) => (typeof str === "string" && str.length > 18 ? `${str.substring(0, 16)}...` : str)}
+                    />
+                    <YAxis
+                      stroke="#888888"
+                      fontSize={10}
+                      width={55}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => formatChartAxisTick(v, formatValue)}
+                    />
+                    <Tooltip content={<CustomChartTooltip formatValue={formatValue} />} />
+                    <Legend wrapperStyle={{ paddingTop: "10px", fontSize: "11px" }} />
+                    <Line
+                      type="monotone"
+                      dataKey="value"
+                      name={title}
+                      stroke="hsl(158, 64%, 40%)"
+                      strokeWidth={3}
+                      dot={{ r: 4, fill: "hsl(158, 64%, 40%)" }}
+                      activeDot={{ r: 7 }}
+                    />
+                  </LineChart>
+                ) : type === "area" ? (
+                  <AreaChart data={data} margin={{ top: 15, right: 20, left: 10, bottom: 45 }}>
+                    <defs>
+                      <linearGradient id="chartGradModal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(158, 64%, 40%)" stopOpacity={0.5} />
+                        <stop offset="95%" stopColor="hsl(158, 64%, 40%)" stopOpacity={0.0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="name"
+                      stroke="#888888"
+                      fontSize={10}
+                      tickLine={false}
+                      axisLine={false}
+                      interval={0}
+                      angle={-25}
+                      textAnchor="end"
+                      height={45}
+                      tickFormatter={(str) => (typeof str === "string" && str.length > 18 ? `${str.substring(0, 16)}...` : str)}
+                    />
+                    <YAxis
+                      stroke="#888888"
+                      fontSize={10}
+                      width={55}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => formatChartAxisTick(v, formatValue)}
+                    />
+                    <Tooltip content={<CustomChartTooltip formatValue={formatValue} />} />
+                    <Legend wrapperStyle={{ paddingTop: "10px", fontSize: "11px" }} />
+                    <Area
+                      type="monotone"
+                      dataKey="value"
+                      name={title}
+                      stroke="hsl(158, 64%, 40%)"
+                      strokeWidth={2.5}
+                      fillOpacity={1}
+                      fill="url(#chartGradModal)"
+                    />
+                  </AreaChart>
+                ) : type === "pie" ? (
+                  <PieChart>
+                    <Tooltip content={<CustomChartTooltip formatValue={formatValue} />} />
+                    <Legend wrapperStyle={{ paddingTop: "14px", fontSize: "11px" }} />
+                    <Pie
+                      data={data}
+                      cx="50%"
+                      cy="42%"
+                      innerRadius={50}
+                      outerRadius={105}
+                      paddingAngle={6}
+                      dataKey="value"
+                      label={({ name, percent }) => `${typeof name === "string" && name.length > 12 ? name.substring(0, 10) + "..." : name} (${(percent * 100).toFixed(0)}%)`}
+                    >
+                      {data.map((_, index) => (
+                        <Cell key={`modal-cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                ) : (
+                  <BarChart data={data} margin={{ top: 15, right: 20, left: 10, bottom: 45 }}>
+                    <XAxis
+                      dataKey="name"
+                      stroke="#888888"
+                      fontSize={10}
+                      tickLine={false}
+                      axisLine={false}
+                      interval={0}
+                      angle={-25}
+                      textAnchor="end"
+                      height={45}
+                      tickFormatter={(str) => (typeof str === "string" && str.length > 18 ? `${str.substring(0, 16)}...` : str)}
+                    />
+                    <YAxis
+                      stroke="#888888"
+                      fontSize={10}
+                      width={55}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => formatChartAxisTick(v, formatValue)}
+                    />
+                    <Tooltip content={<CustomChartTooltip formatValue={formatValue} />} />
+                    <Legend wrapperStyle={{ paddingTop: "10px", fontSize: "11px" }} />
+                    <Bar dataKey="value" name={title} radius={[6, 6, 0, 0]} maxBarSize={60}>
+                      {data.map((_, index) => (
+                        <Cell key={`modal-cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                )}
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const SUGGESTIONS = [
@@ -173,6 +534,7 @@ function AIAssistantPage() {
         sourceTag,
         isError: !localResult.isSupported,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        ...(localResult.chartConfig ? { chartConfig: localResult.chartConfig } : {}),
       };
 
       setMessages((prev) => [...prev, aiMsg]);
@@ -266,6 +628,7 @@ function AIAssistantPage() {
                 }`}
               >
                 <FormattedMarkdown text={msg.text} />
+                {msg.chartConfig && <InlineChatChart config={msg.chartConfig} />}
 
                 {/* Footer metadata bar with copy icon at bottom-right */}
                 <div className="mt-2 pt-2 border-t border-border/30 flex items-center justify-between text-[10px] sm:text-[11px] font-mono gap-2.5">

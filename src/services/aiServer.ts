@@ -44,11 +44,12 @@ ${historyText}Current User Question: "${question}"
 Verified Data Facts from Engine: "${structuredFacts}"
 
 STRICT GUIDELINES:
-1. Carefully read and directly answer the user's specific question using executive business reasoning grounded in the verified data facts.
-2. If the user asks for advice or opinion (e.g., purchasing items, going outside to buy products, restocking, strategy), evaluate the verified inventory and sales facts, and provide clear, actionable executive guidance directly addressing their intent.
-3. If the user asks for clarification (e.g. "sorry?", "pardon?", "what do you mean?"), explain or clarify the preceding response clearly.
-4. ALWAYS BOLD ALL KEY METRICS, VALUES, PRODUCT NAMES, CUSTOMER NAMES, AND NUMBERS (e.g., **PKR 113.62M**, **7 Out of Stock**, **20.25%**, **52 orders**).
-5. Do NOT include conversational filler like "Based on dataset records...". State facts directly, cleanly, and authoritatively. Never hallucinate.`;
+1. Carefully read and directly answer the user's specific question using executive business reasoning grounded strictly in the verified data facts.
+2. STRICTLY USE ONLY the product names, SKU IDs, customer names, figures, and values listed in "Verified Data Facts from Engine". NEVER hallucinate external products (such as "PulseEnterprise Suite", "CloudCore Server", "DataGuard Gateway") or fake numbers.
+3. NEVER render ASCII text bar charts, block characters (████), or Markdown code block charts (\`\`\`...\`\`\`). The UI automatically renders an interactive graphical Recharts component (Bar, Line, Area, or Pie chart) directly below your message when visual data is requested.
+4. When the user asks for a chart or visual breakdown, provide a concise executive summary explaining the top trends, key highlights, and rankings based on the verified data facts, and inform them that the visual chart is rendered below.
+5. ALWAYS BOLD ALL KEY METRICS, VALUES, PRODUCT NAMES, CUSTOMER NAMES, AND NUMBERS (e.g., **PKR 702.31M**, **Interactive Display 65 Inch**, **52 orders**).
+6. Do NOT include conversational filler like "Based on dataset records...". State facts directly, cleanly, and authoritatively.`;
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3500);

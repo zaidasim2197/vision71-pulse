@@ -2,6 +2,7 @@ import { type Dataset } from "@/lib/dataset";
 import {
   calculateDeliveryPerformance,
   calculateInventoryHealth,
+  calculateMonthlySeries,
   calculateReceivables,
   calculateSales,
   formatCompactPKR,
@@ -18,11 +19,31 @@ import {
 } from "./metrics";
 import { inRange, resolvePreset, type DateRange } from "./dateRange";
 
+export interface ChartConfig {
+  type: "bar" | "line" | "pie" | "area";
+  title: string;
+  data: { name: string; value: number; secondaryValue?: number }[];
+  formatValue?: "pkr" | "number" | "pct";
+}
+
 export interface AIAnalysisResult {
   isSupported: boolean;
   question: string;
   structuredFacts: string;
   directAnswer: string;
+  chartConfig?: ChartConfig;
+}
+
+export function detectRequestedChartType(
+  q: string,
+  defaultType: "bar" | "line" | "pie" | "area",
+): "bar" | "line" | "pie" | "area" {
+  const qLower = q.toLowerCase();
+  if (qLower.includes("pie") || qLower.includes("donut")) return "pie";
+  if (qLower.includes("line") || qLower.includes("trend")) return "line";
+  if (qLower.includes("area") || qLower.includes("growth")) return "area";
+  if (qLower.includes("bar") || qLower.includes("column")) return "bar";
+  return defaultType;
 }
 
 export interface ChatHistoryMessage {
@@ -161,6 +182,43 @@ export function queryAiEngine(
   const pronounRegex = /\b(it|its|this|that|they|their|them|same|above|previous|former|latter|the product|the item|the customer|the city)\b/i;
   const isFollowUp = pronounRegex.test(qRaw) || q.includes("what about") || q.includes("tell me more");
 
+  // Chart Format Follow-up Interceptor (e.g. "create its pie chart instead of bar", "make it a line chart", "show pie chart instead")
+  const isChartFormatFollowUp =
+    (q.includes("pie") || q.includes("bar") || q.includes("line") || q.includes("area") || q.includes("chart") || q.includes("graph")) &&
+    (q.includes("instead") || q.includes("convert") || q.includes("change") || q.includes("switch") || q.includes("make it") || q.includes("show as") || q.includes("create its") || q.includes("render as") || q.includes("format"));
+
+  if (isChartFormatFollowUp && chatHistory && chatHistory.length > 0) {
+    const userMessages = [...chatHistory].reverse().filter((m) => m.sender === "user");
+    let lastAnalyticalQuery: string | null = null;
+
+    for (const uMsg of userMessages) {
+      const uText = uMsg.text.toLowerCase();
+      const isFormatOnly =
+        uText.includes("instead") ||
+        uText.includes("create its") ||
+        uText.includes("make it a") ||
+        uText.includes("change to") ||
+        uText.includes("convert to") ||
+        uText.includes("show as");
+      if (!isFormatOnly && uText.trim().length > 3) {
+        lastAnalyticalQuery = uMsg.text;
+        break;
+      }
+    }
+
+    if (lastAnalyticalQuery) {
+      const historyWithoutLast = chatHistory.slice(0, -1);
+      const combinedQuery = `${lastAnalyticalQuery} ${question}`;
+      const res = queryAiEngine(combinedQuery, data, currentRange, historyWithoutLast);
+      if (res && res.isSupported) {
+        return {
+          ...res,
+          question,
+        };
+      }
+    }
+  }
+
   // Helper to prepend chat history summary to structured facts for Gemini
   const attachHistoryFacts = (facts: string) => {
     if (!chatHistory || chatHistory.length === 0) return facts;
@@ -294,6 +352,68 @@ export function queryAiEngine(
       structuredFacts: attachHistoryFacts(facts),
       directAnswer,
     };
+  }
+
+  const isBusinessTopicQuery =
+    q.includes("product") ||
+    q.includes("order") ||
+    q.includes("customer") ||
+    q.includes("status") ||
+    q.includes("sales") ||
+    q.includes("revenue") ||
+    q.includes("inventory") ||
+    q.includes("stock") ||
+    q.includes("receivable") ||
+    q.includes("city") ||
+    q.includes("industry") ||
+    q.includes("sector") ||
+    q.includes("channel") ||
+    q.includes("profit") ||
+    q.includes("delivery") ||
+    q.includes("refund") ||
+    q.includes("return");
+
+  // 5. Chart & Graph Capability Meta-Handler (ONLY for general questions about capabilities, e.g. "can you generate charts?")
+  if (
+    !isBusinessTopicQuery &&
+    (q.includes("chart") ||
+      q.includes("graph") ||
+      q.includes("visualize") ||
+      q.includes("draw") ||
+      q.includes("diagram"))
+  ) {
+    if (
+      q.includes("can") ||
+      q.includes("possible") ||
+      q.includes("efficient") ||
+      q.includes("fast") ||
+      q.includes("generate") ||
+      q.includes("how") ||
+      q.includes("clean")
+    ) {
+      const monthlySeries = calculateMonthlySeries(data, currentRange);
+      const chartConfig: ChartConfig = {
+        type: detectRequestedChartType(q, "area"),
+        title: "Monthly Sales Trend (Interactive Sample Chart)",
+        data: monthlySeries.map((m) => ({
+          name: m.label,
+          value: m.netSales,
+        })),
+        formatValue: "pkr",
+      };
+
+      const facts = `Chart & Graph Generation Capabilities: Fully Supported, Instant & Clean. Supported chart types: Bar Chart (Top Products, Top Customers, City Performance, Industry Sectors), Area/Line Chart (Monthly Sales Trends, Revenue over Time), Pie Chart (Sales Channels, Inventory Stock Status Breakdown). Latency: 0ms (Client-Side Recharts execution).`;
+
+      const directAnswer = `Yes! I can instantly generate clean, interactive, and responsive **charts and graphs** on request directly inside our chat interface.\n\n### ⚡ Highlights:\n- **Instant & Fast (0ms Latency)**: Charts are calculated directly from your sales data using client-side **Recharts** rendering with zero network delay.\n- **Clean & High Quality**: Modern HSL styling, precise hover tooltips, and compact layout.\n- **Multiple Visualizations**:\n  - **Bar Charts**: Top products, top customers, city performance, industry sectors\n  - **Area & Line Charts**: Monthly revenue trends, sales over time\n  - **Pie Charts**: Sales channel distribution, inventory stock status breakdown\n\nHere is a live sample chart of your monthly sales performance below:`;
+
+      return {
+        isSupported: true,
+        question,
+        structuredFacts: attachHistoryFacts(facts),
+        directAnswer,
+        chartConfig,
+      };
+    }
   }
 
   // Explicit Out-of-scope check (only trigger for clear non-business subjects like weather, recipes, coding, etc.)
@@ -440,17 +560,27 @@ export function queryAiEngine(
     q.includes("located");
 
   if (!matchedProduct && historyContext.referencedProduct && !isCustomerTerm) {
+    const isChartQueryWord =
+      q.includes("chart") ||
+      q.includes("graph") ||
+      q.includes("instead") ||
+      q.includes("pie") ||
+      q.includes("bar") ||
+      q.includes("line") ||
+      q.includes("area");
+
     const isProductFollowUp =
-      pronounRegex.test(qRaw) ||
-      q.includes("price") ||
-      q.includes("cost") ||
-      q.includes("unit") ||
-      q.includes("sku") ||
-      q.includes("remaining") ||
-      q.includes("stock") ||
-      q.includes("inventory") ||
-      q.includes("reorder") ||
-      q.includes("category");
+      !isChartQueryWord &&
+      (pronounRegex.test(qRaw) ||
+        q.includes("price") ||
+        q.includes("cost") ||
+        q.includes("unit") ||
+        q.includes("sku") ||
+        q.includes("remaining") ||
+        q.includes("stock") ||
+        q.includes("inventory") ||
+        q.includes("reorder") ||
+        q.includes("category"));
 
     if (isProductFollowUp) {
       matchedProduct = historyContext.referencedProduct;
@@ -713,11 +843,22 @@ export function queryAiEngine(
       directAnswer = `The product generating the highest profit is **${top1.product.product_name}** with **${formatCompactPKR(top1.grossProfit)}** (**${formatPKR(top1.grossProfit)}**) in gross profit.\n\nThe top ${limit} most profitable products overall are:\n${listFormatted}`;
     }
 
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "bar"),
+      title: `Top ${topByProfit.length} Products by Gross Profit`,
+      data: topByProfit.map((p) => ({
+        name: p.product.product_name,
+        value: p.grossProfit,
+      })),
+      formatValue: "pkr",
+    };
+
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer,
+      chartConfig,
     };
   }
 
@@ -730,12 +871,24 @@ export function queryAiEngine(
     q.includes("gross sales")
   ) {
     const sales = calculateSales(data, currentRange);
+    const monthlySeries = calculateMonthlySeries(data, currentRange);
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "area"),
+      title: "Monthly Sales Trend",
+      data: monthlySeries.map((m) => ({
+        name: m.label,
+        value: m.netSales,
+      })),
+      formatValue: "pkr",
+    };
+
     const facts = `Net Sales: ${formatPKR(sales.netSales)} (${formatCompactPKR(sales.netSales)}). Gross Sales: ${formatPKR(sales.grossSales)}. Returns: ${formatPKR(sales.returns)}. Gross Profit: ${formatPKR(sales.grossProfit)} (${sales.grossMarginPct.toFixed(2)}% margin). Total Qualifying Orders: ${sales.totalOrders.toLocaleString()}. Selected period: ${currentRange.preset}.`;
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer: `Net Sales for the selected period are ${formatCompactPKR(sales.netSales)} (${formatPKR(sales.netSales)}). Gross sales reached ${formatCompactPKR(sales.grossSales)} with ${formatCompactPKR(sales.returns)} in returns across ${sales.totalOrders.toLocaleString()} qualifying orders.`,
+      chartConfig,
     };
   }
 
@@ -762,12 +915,24 @@ export function queryAiEngine(
   ) {
     const recRecords = getReceivableRecords(data);
     const rec = calculateReceivables(recRecords);
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "bar"),
+      title: "Receivables Breakdown",
+      data: [
+        { name: "Current", value: rec.current },
+        { name: "Due Soon", value: rec.dueSoon },
+        { name: "Overdue", value: rec.overdue },
+      ],
+      formatValue: "pkr",
+    };
+
     const facts = `Total Outstanding Receivables: ${formatPKR(rec.outstanding)} (${formatCompactPKR(rec.outstanding)}). Overdue Receivables: ${formatPKR(rec.overdue)} (${formatCompactPKR(rec.overdue)}). Overdue Share: ${rec.overduePct.toFixed(2)}%. Overdue Invoices Count: ${rec.overdueCount}. Current Outstanding: ${formatCompactPKR(rec.current)}. Due Soon Outstanding: ${formatCompactPKR(rec.dueSoon)}.`;
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer: `Total outstanding receivables are ${formatCompactPKR(rec.outstanding)} (${formatPKR(rec.outstanding)}). Of this, ${formatCompactPKR(rec.overdue)} is overdue across ${rec.overdueCount} invoices, representing ${rec.overduePct.toFixed(2)}% of total receivables.`,
+      chartConfig,
     };
   }
 
@@ -782,12 +947,25 @@ export function queryAiEngine(
   ) {
     const invRecords = getInventoryRecords(data);
     const inv = calculateInventoryHealth(invRecords);
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "pie"),
+      title: "Inventory Stock Status",
+      data: [
+        { name: "In Stock", value: inv.inStock },
+        { name: "Low Stock", value: inv.lowStock },
+        { name: "Out of Stock", value: inv.outOfStock },
+        { name: "Discrepancy", value: inv.discrepancy },
+      ],
+      formatValue: "number",
+    };
+
     const facts = `Total Inventory Valuation: ${formatPKR(inv.inventoryValue)} (${formatCompactPKR(inv.inventoryValue)}). Total SKUs: ${inv.total}. In Stock: ${inv.inStock}. Low Stock: ${inv.lowStock}. Out of Stock: ${inv.outOfStock}. Inventory Discrepancy: ${inv.discrepancy}. Healthy Stock Pct: ${inv.healthyPct.toFixed(1)}%.`;
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer: `Inventory valuation is ${formatCompactPKR(inv.inventoryValue)}. Stock breakdown across ${inv.total} products: ${inv.inStock} In Stock, ${inv.lowStock} Low Stock (at/below reorder level), ${inv.outOfStock} Out of Stock, and ${inv.discrepancy} Discrepancy items.`,
+      chartConfig,
     };
   }
 
@@ -862,11 +1040,23 @@ export function queryAiEngine(
       )
       .join("\n");
     const facts = `Total Product SKUs in Dataset: ${data.products.length}. User requested Top ${limit} Products. Top Product: ${top1.product.product_name} generating ${formatPKR(top1.revenue)} across ${top1.units} units. Top ${limit} Products:\n${topListFormatted}`;
+    
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "bar"),
+      title: `Top ${top.length} Products by Sales`,
+      data: top.map((p) => ({
+        name: p.product.product_name,
+        value: p.revenue,
+      })),
+      formatValue: "pkr",
+    };
+
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer: `Your top overall product is **${top1.product.product_name}** with total revenue of **${formatPKR(top1.revenue)}** across **${top1.units}** units sold.\n\nThe top ${limit} best-selling products overall are:\n${topListFormatted}`,
+      chartConfig,
     };
   }
 
@@ -931,11 +1121,23 @@ export function queryAiEngine(
       )
       .join("\n");
     const facts = `Total Registered Customer Accounts in Dataset: ${data.customers.length}. User requested Top ${limit} Customers. Top Customer: ${top1.customer.customer_name} spending ${formatPKR(top1.revenue)} over ${top1.orders} orders. Top ${limit} Customers:\n${topListFormatted}`;
+    
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "bar"),
+      title: `Top ${top.length} Customers by Revenue`,
+      data: top.map((c) => ({
+        name: c.customer.customer_name,
+        value: c.revenue,
+      })),
+      formatValue: "pkr",
+    };
+
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer: `Your top overall customer is **${top1.customer.customer_name}** with total revenue of **${formatPKR(top1.revenue)}** across **${top1.orders}** orders.\n\nThe top ${limit} repeat customers overall are:\n${topListFormatted}`,
+      chartConfig,
     };
   }
 
@@ -981,11 +1183,22 @@ export function queryAiEngine(
       directAnswer = `The top city by order volume is **${top1.city}** with **${top1.orders} orders** (**${formatCompactPKR(top1.revenue)}**).\n\nThe top ${limit} cities by order volume are:\n${cityListFormatted}`;
     }
 
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "bar"),
+      title: `Top ${cities.length} Cities by Sales Revenue`,
+      data: cities.map((c) => ({
+        name: c.city,
+        value: c.revenue,
+      })),
+      formatValue: "pkr",
+    };
+
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer,
+      chartConfig,
     };
   }
 
@@ -1012,11 +1225,22 @@ export function queryAiEngine(
 
     const directAnswer = `The top industry sector by order volume is **${top1.industry}** with **${top1.orders} orders** (**${formatCompactPKR(top1.revenue)}** in sales).\n\nTop ${limit} industry sectors:\n${indListFormatted}`;
 
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "bar"),
+      title: `Sales by Industry Sector`,
+      data: industries.map((ind) => ({
+        name: ind.industry,
+        value: ind.revenue,
+      })),
+      formatValue: "pkr",
+    };
+
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer,
+      chartConfig,
     };
   }
 
@@ -1048,37 +1272,80 @@ export function queryAiEngine(
 
     const directAnswer = `Our top sales channel is **${top1.channel}** generating **${formatCompactPKR(top1.revenue)}** across **${top1.orders}** orders.\n\nSales channel breakdown:\n${chanListFormatted}`;
 
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "pie"),
+      title: `Sales Channel Breakdown`,
+      data: channels.map((ch) => ({
+        name: ch.channel,
+        value: ch.revenue,
+      })),
+      formatValue: "pkr",
+    };
+
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer,
+      chartConfig,
     };
   }
 
   // 8. Orders & Status summary
-  if (q.includes("order") || q.includes("cancelled") || q.includes("pending") || q.includes("processing")) {
+  if (
+    q.includes("order") ||
+    q.includes("status") ||
+    q.includes("cancelled") ||
+    q.includes("pending") ||
+    q.includes("processing")
+  ) {
     const statuses = getOrderStatusSummary(data, currentRange);
     const summaryStr = statuses.map((s) => `${s.status}: ${s.count} orders (${formatCompactPKR(s.value)})`).join(", ");
     const totalCount = statuses.reduce((acc, s) => acc + s.count, 0);
     const facts = `Total Orders in Range: ${totalCount}. Status Breakdown: ${summaryStr}.`;
+    
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "pie"),
+      title: "Order Status Breakdown Distribution",
+      data: statuses.map((s) => ({
+        name: s.status,
+        value: s.count,
+        secondaryValue: s.value,
+      })),
+      formatValue: "number",
+    };
+
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer: `Total order count for the period is ${totalCount.toLocaleString()}. Order breakdown: ${summaryStr}.`,
+      chartConfig,
     };
   }
 
   // 9. Peak sales month / best month
   if (q.includes("month") || q.includes("highest sales") || q.includes("peak")) {
     const salesAll = calculateSales(data, resolvePreset("allTime"));
+    const monthlySeries = calculateMonthlySeries(data, resolvePreset("allTime"));
     const facts = `Historical Dataset covers March 2025 through August 2026. All-time Net Sales reach ${formatCompactPKR(salesAll.netSales)} (${formatPKR(salesAll.netSales)}) across ${salesAll.totalOrders.toLocaleString()} orders.`;
+    
+    const chartConfig: ChartConfig = {
+      type: detectRequestedChartType(q, "area"),
+      title: "All-Time Monthly Sales Performance",
+      data: monthlySeries.map((m) => ({
+        name: m.label,
+        value: m.netSales,
+      })),
+      formatValue: "pkr",
+    };
+
     return {
       isSupported: true,
       question,
       structuredFacts: facts,
       directAnswer: `Across the historical dataset (March 2025 – August 2026), total net sales reached ${formatCompactPKR(salesAll.netSales)} (${formatPKR(salesAll.netSales)}).`,
+      chartConfig,
     };
   }
 

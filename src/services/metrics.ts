@@ -604,6 +604,28 @@ export function compact(value: number): string {
   return `${sign}${abs.toFixed(0)}`;
 }
 
+export function formatChartAxisTick(v: any, formatValue: "pkr" | "pct" | "number" = "pkr"): string {
+  if (typeof v !== "number" || !Number.isFinite(v)) return String(v ?? "");
+  if (v === 0) return "0";
+  if (formatValue === "pct") return `${v}%`;
+
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1e9) {
+    const val = abs / 1e9;
+    return `${sign}${val % 1 === 0 ? val.toFixed(0) : val < 10 ? val.toFixed(1) : val.toFixed(0)}B`;
+  }
+  if (abs >= 1e6) {
+    const val = abs / 1e6;
+    return `${sign}${val % 1 === 0 ? val.toFixed(0) : val < 10 ? val.toFixed(1) : val.toFixed(0)}M`;
+  }
+  if (abs >= 1e3) {
+    const val = abs / 1e3;
+    return `${sign}${val % 1 === 0 ? val.toFixed(0) : val < 10 ? val.toFixed(1) : val.toFixed(0)}K`;
+  }
+  return `${sign}${abs % 1 === 0 ? abs.toFixed(0) : abs.toFixed(1)}`;
+}
+
 export const formatPct = (value: number, decimals = 1) =>
   Number.isFinite(value) ? `${value.toFixed(decimals)}%` : "—";
 
