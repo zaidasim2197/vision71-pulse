@@ -1,14 +1,18 @@
 export default {
-  // Detect environment automatically
-  preset: process.env.VERCEL ? 'vercel' : 'cloudflare-module',
-  
+  // Always build for Vercel serverless deployment
+  preset: 'vercel',
+
   // Inline tslib and radix-ui dependencies into server bundle
   externals: {
-    inline: ['tslib', '@radix-ui/react-dialog', '@radix-ui/primitive', 'clsx', 'tailwind-merge'],
+    inline: [/^tslib/, /^@radix-ui\//, 'clsx', 'tailwind-merge'],
+    traceInclude: [
+      'node_modules/tslib/**',
+      'tslib/**',
+    ],
   },
 
   // Node compatibility for Vercel
-  node: Boolean(process.env.VERCEL),
+  node: true,
 
   // Build settings
   minify: true,
