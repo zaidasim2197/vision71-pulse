@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { nitro } from "nitro/vite";
 
-// Detect platform: Vercel sets VERCEL=1, Netlify sets NETLIFY=true
+// Detect platform from CI env vars injected by each platform
 const preset = process.env.VERCEL
   ? "vercel"
   : process.env.NETLIFY
@@ -13,6 +13,11 @@ const preset = process.env.VERCEL
     : "node-server";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      tslib: "tslib/tslib.es6.mjs",
+    },
+  },
   plugins: [
     tsconfigPaths(),
     tanstackStart({
@@ -24,6 +29,7 @@ export default defineConfig({
     tailwindcss(),
     ...nitro({
       preset,
+      // Inline all packages so tslib is bundled into the server build
       noExternals: true,
       minify: true,
     }),
