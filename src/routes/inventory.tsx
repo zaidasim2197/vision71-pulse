@@ -58,6 +58,24 @@ function InventoryPage() {
   const { dataset, loading } = useDataset();
   const [tableModalOpen, setTableModalOpen] = useState(false);
 
+  const categoryValuation = useMemo(() => {
+    if (!dataset) return [];
+    const qtyByProduct = new Map<string, number>();
+    for (const row of dataset.inventory) {
+      qtyByProduct.set(row.product_id, (qtyByProduct.get(row.product_id) ?? 0) + row.quantity_on_hand);
+    }
+    const map = new Map<string, number>();
+    for (const p of dataset.products) {
+      if (p.product_status !== "Active") continue;
+      const qoh = qtyByProduct.get(p.product_id) ?? 0;
+      const val = qoh * p.unit_cost;
+      map.set(p.category, (map.get(p.category) || 0) + val);
+    }
+    return Array.from(map.entries())
+      .map(([category, value]) => ({ category, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [dataset]);
+
   if (loading || !dataset) {
     return (
       <div className="mx-auto max-w-7xl px-4 py-6 space-y-6">
@@ -77,23 +95,6 @@ function InventoryPage() {
 
   const invHealth = calculateHaroonInventory(dataset);
   const lowStockItems = getLowStockItems(dataset, 5);
-
-  const categoryValuation = useMemo(() => {
-    const qtyByProduct = new Map<string, number>();
-    for (const row of dataset.inventory) {
-      qtyByProduct.set(row.product_id, (qtyByProduct.get(row.product_id) ?? 0) + row.quantity_on_hand);
-    }
-    const map = new Map<string, number>();
-    for (const p of dataset.products) {
-      if (p.product_status !== "Active") continue;
-      const qoh = qtyByProduct.get(p.product_id) ?? 0;
-      const val = qoh * p.unit_cost;
-      map.set(p.category, (map.get(p.category) || 0) + val);
-    }
-    return Array.from(map.entries())
-      .map(([category, value]) => ({ category, value }))
-      .sort((a, b) => b.value - a.value);
-  }, [dataset]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-3 md:py-4 h-full flex flex-col justify-between overflow-y-auto md:overflow-hidden space-y-3.5">

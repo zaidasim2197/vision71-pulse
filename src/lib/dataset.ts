@@ -10,7 +10,8 @@ export const QUALIFYING_STATUSES = [
   "Shipped",
   "Delivered",
   "Returned",
-  "Partially Returned",
+  "Processing",
+  "Pending",
 ] as const;
 
 export interface Order {
@@ -34,6 +35,7 @@ export interface OrderItem {
   order_id: string;
   product_id: string;
   quantity: number;
+  unit_price?: number;
   line_total: number;
   line_cost: number;
 }
